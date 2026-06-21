@@ -1,20 +1,24 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 pub(crate) mod inner;
 use crate::error::MemtableError;
-use crate::util;
 use inner::{MemtableInner, NodeData};
 use std::path::Path;
 
 pub struct Memtable {
     inner: Arc<RwLock<MemtableInner>>,
+    max_size: usize,
+    max_nodes: usize,
 }
 
 impl Memtable {
     pub fn new(max_size: usize, max_nodes: usize) -> std::io::Result<Memtable> {
         let inner = Arc::new(RwLock::new(MemtableInner::new(max_size, max_nodes)?));
-        Ok(Memtable { inner })
+        Ok(Memtable {
+            inner,
+            max_size,
+            max_nodes,
+        })
     }
 
     pub fn new_from_wal(
@@ -25,7 +29,11 @@ impl Memtable {
         let inner_table = MemtableInner::from_wal(wal_filepath, max_size, max_nodes)?;
         let inner = Arc::new(RwLock::new(inner_table));
 
-        Ok(Memtable { inner })
+        Ok(Memtable {
+            inner,
+            max_size,
+            max_nodes,
+        })
     }
 
     pub async fn insert(&self, key: String, data: Vec<u8>) -> Result<(), MemtableError> {
@@ -46,8 +54,10 @@ impl Memtable {
         handle.insert(key, tombstone)
     }
 
-    pub async fn flush(&self) -> PathBuf {
-        let path = util::generate_sstable_file_name();
-        todo!()
+    pub async fn rotate(&self) -> std::io::Result<Arc<RwLock<MemtableInner>>> {
+        let mut handle = self.inner.write().await;
+        let full_table = Arc::clone(&self.inner);
+        *handle = MemtableInner::new(self.max_size, self.max_nodes)?;
+        Ok(full_table)
     }
 }

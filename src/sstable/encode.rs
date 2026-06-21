@@ -24,11 +24,17 @@ fn encode_index_block(index_block: Vec<(String, u64)>) -> Vec<u8> {
     buffer[..offset].to_vec()
 }
 
-fn encode_footer(data_block_end: u64, index_block_end: u64, bloom_filter_end: u64) -> Vec<u8> {
-    let mut buffer = vec![0_u8; 24];
+fn encode_footer(
+    data_block_end: u64,
+    index_block_end: u64,
+    index_block_count: u64,
+    bloom_filter_end: u64,
+) -> Vec<u8> {
+    let mut buffer = vec![0_u8; 32];
     buffer[..8].copy_from_slice(&data_block_end.to_be_bytes());
     buffer[8..16].copy_from_slice(&index_block_end.to_be_bytes());
-    buffer[16..].copy_from_slice(&bloom_filter_end.to_be_bytes());
+    buffer[16..24].copy_from_slice(&index_block_count.to_be_bytes());
+    buffer[24..].copy_from_slice(&index_block_count.to_be_bytes());
     buffer
 }
 
@@ -51,6 +57,7 @@ pub fn write_sstable(table: &MemtableInner, fd: &mut File) -> std::io::Result<()
     )?;
 
     let data_block_end = disk_size;
+    let index_block_len = index_block.len();
     let index_block_buffer = encode_index_block(index_block);
     let index_block_end = data_block_end + index_block_buffer.len();
     fd.write(&index_block_buffer)?;
@@ -60,6 +67,7 @@ pub fn write_sstable(table: &MemtableInner, fd: &mut File) -> std::io::Result<()
     let footer = encode_footer(
         data_block_end as u64,
         index_block_end as u64,
+        index_block_len as u64,
         bloom_filter_end as u64,
     );
     fd.write(&footer)?;

@@ -236,7 +236,7 @@ impl MemtableInner {
     }
 
     pub fn flush_to_disk(self, fd: &mut File) -> std::io::Result<Self> {
-        sstable::encode::write_sstable(&self, fd);
+        sstable::encode::write_sstable(&self, fd)?;
         let max_size = self.max_size;
         let max_nodes = self.arena.len();
         Self::new(max_size, max_nodes)
