@@ -5,6 +5,12 @@ const LEAST_BYTE_USIZE: usize = 0x7F;
 const LEAST_BYTE_U8: u8 = 0x7F;
 const CONTINUATION: u8 = 0x80;
 
+pub fn get_be_array8(buffer: &[u8], offset: usize) -> [u8; 8] {
+    buffer[offset..offset + 8]
+        .try_into()
+        .expect("Invalid size slice when deserializing bloom filter")
+}
+
 pub fn generate_wal_file_name() -> PathBuf {
     let start_ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)

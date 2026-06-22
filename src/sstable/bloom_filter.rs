@@ -1,12 +1,6 @@
 use crate::util;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-fn get_be_array(buffer: &[u8], offset: usize) -> [u8; 8] {
-    buffer[offset..offset + 8]
-        .try_into()
-        .expect("Invalid size slice when deserializing bloom filter")
-}
-
 fn hash1(key: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     0_u64.hash(&mut hasher);
@@ -47,13 +41,13 @@ impl BloomFilter {
         let mut offset = bytes_walked;
         let mut bits: Vec<u64> = Vec::with_capacity(num_words as usize);
         for _ in 0..num_words {
-            let be_bytes: [u8; 8] = get_be_array(buffer, offset);
+            let be_bytes: [u8; 8] = util::get_be_array8(buffer, offset);
             bits.push(u64::from_be_bytes(be_bytes));
             offset += 8;
         }
 
         let num_bits = 64_u64 * bits.len() as u64;
-        let be_bytes: [u8; 8] = get_be_array(buffer, offset);
+        let be_bytes: [u8; 8] = util::get_be_array8(buffer, offset);
         let num_hashes = u64::from_be_bytes(be_bytes);
 
         BloomFilter {
