@@ -10,6 +10,9 @@ pub struct SstIndex {
     bloom_filter: BloomFilter,
 }
 
+/// Read the index table in from disk.
+/// The layout for each index entry is:
+///     [key length (varint)][variable length key][offset (8 Big Endian u64)]
 fn decode_index(buffer: &[u8], index_len: usize) -> (Vec<String>, Vec<u64>) {
     let mut keys: Vec<String> = Vec::with_capacity(index_len);
     let mut offsets: Vec<u64> = Vec::with_capacity(index_len);
@@ -33,6 +36,7 @@ fn decode_index(buffer: &[u8], index_len: usize) -> (Vec<String>, Vec<u64>) {
 }
 
 impl SstIndex {
+    /// Read the SSTable Index from disk, given a file descriptor.
     pub fn from_disk_sstable(fd: &mut File) -> std::io::Result<SstIndex> {
         let footer_offset = fd.metadata()?.len() - constants::FOOTER_SIZE;
         let footer = SSTableFooter::from_disk_sstable(fd, footer_offset)?;
@@ -55,7 +59,9 @@ impl SstIndex {
         })
     }
 
-    pub fn contains(&self, key: &str) -> Option<u64> {
+    /// Returns the start of the index range a key falls into, if the key is in the SSTable file on
+    /// disk, otherwise None is returned.
+    pub fn range_search_start(&self, key: &str) -> Option<u64> {
         if !self.bloom_filter.contains(key) {
             return None;
         }
