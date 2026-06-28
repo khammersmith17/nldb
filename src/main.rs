@@ -1,3 +1,4 @@
+pub mod compaction;
 pub mod constants;
 pub mod disk;
 pub mod error;

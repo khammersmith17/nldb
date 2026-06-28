@@ -8,7 +8,7 @@ use tokio::sync::mpsc::Receiver;
 *   while there are tables to merge.
 * */
 pub async fn compaction_fn(receiver: Receiver<u8>, sstable_cache: SSTableCache) {
-    while let Some(_singal) = self.receiver.recv().await {
+    while let Some(_singal) = receiver.recv().await {
         let tables = sstable_cache.clone_tables();
         todo!()
     }
