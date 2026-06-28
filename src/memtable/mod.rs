@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 pub(crate) mod inner;
 use crate::error::MemtableError;
-use inner::{MemtableInner, NodeData};
+use inner::{Blob, MemtableInner, NodeData};
 use std::path::Path;
 
 pub struct Memtable {
@@ -36,14 +36,14 @@ impl Memtable {
         })
     }
 
-    pub async fn insert(&self, key: String, data: Vec<u8>) -> Result<(), MemtableError> {
+    pub async fn insert(&self, key: String, data: Blob) -> Result<(), MemtableError> {
         let node_data = NodeData::Data(data);
         let mut handle = self.inner.write().await;
         handle.insert(key, node_data)?;
         Ok(())
     }
 
-    pub async fn get(&self, key: &str) -> Option<Vec<u8>> {
+    pub async fn get(&self, key: &str) -> Option<Blob> {
         let handle = self.inner.read().await;
         handle.get(key)
     }

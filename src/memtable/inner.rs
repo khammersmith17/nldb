@@ -90,6 +90,8 @@ fn derive_rotation_direction(
     }
 }
 
+pub type Blob = Vec<u8>;
+
 enum ChildType {
     Inner,
     Outer,
@@ -118,7 +120,7 @@ enum Color {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum NodeData {
-    Data(Vec<u8>),
+    Data(Blob),
     Tombstone,
 }
 
@@ -454,7 +456,7 @@ impl MemtableInner {
     }
 
     // Always returned owned copy of the data segment.
-    pub fn get(&self, key: &str) -> Option<Vec<u8>> {
+    pub fn get(&self, key: &str) -> Option<Blob> {
         let node_idx = self.get_search(key)?;
         let node_data = &self.arena[node_idx].data;
         match node_data {

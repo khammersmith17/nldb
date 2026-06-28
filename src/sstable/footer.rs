@@ -1,4 +1,4 @@
-use crate::{constants, util};
+use crate::util;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 
@@ -16,10 +16,10 @@ impl SSTableFooter {
         let index_block_start_array = util::get_be_array8(&footer_buffer, 0);
         let index_block_start = u64::from_be_bytes(index_block_start_array);
 
-        let index_block_len_array = util::get_be_array8(&footer_buffer, 0);
+        let index_block_len_array = util::get_be_array8(&footer_buffer, 8);
         let index_block_len = u64::from_be_bytes(index_block_len_array);
 
-        let bloom_filter_start_array = util::get_be_array8(&footer_buffer, 0);
+        let bloom_filter_start_array = util::get_be_array8(&footer_buffer, 16);
         let bloom_filter_start = u64::from_be_bytes(bloom_filter_start_array);
 
         Ok(SSTableFooter {

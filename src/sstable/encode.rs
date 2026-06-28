@@ -29,7 +29,7 @@ fn encode_footer(
     index_block_count: u64,
     bloom_filter_start: u64,
 ) -> Vec<u8> {
-    let mut buffer = vec![0_u8; 32];
+    let mut buffer = vec![0_u8; constants::FOOTER_SIZE as usize];
     buffer[..8].copy_from_slice(&index_block_start.to_be_bytes());
     buffer[8..16].copy_from_slice(&index_block_count.to_be_bytes());
     buffer[16..24].copy_from_slice(&bloom_filter_start.to_be_bytes());

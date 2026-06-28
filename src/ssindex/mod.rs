@@ -8,6 +8,7 @@ pub struct SstIndex {
     keys: Vec<String>,
     offsets: Vec<u64>,
     bloom_filter: BloomFilter,
+    data_block_end: u64,
 }
 
 /// Read the index table in from disk.
@@ -40,13 +41,14 @@ impl SstIndex {
     pub fn from_disk_sstable(fd: &mut File) -> std::io::Result<SstIndex> {
         let footer_offset = fd.metadata()?.len() - constants::FOOTER_SIZE;
         let footer = SSTableFooter::from_disk_sstable(fd, footer_offset)?;
-        let mut index_table_buffer = vec![0_u8; footer.index_block_len as usize];
+        let mut index_table_buffer =
+            vec![0_u8; (footer.bloom_filter_start - footer.index_block_start) as usize];
         fd.seek(SeekFrom::Start(footer.index_block_start))?;
         fd.read_exact(&mut index_table_buffer)?;
 
         let (keys, offsets) = decode_index(&index_table_buffer, footer.index_block_len as usize);
 
-        let bloom_filter_len = footer.bloom_filter_start - footer_offset;
+        let bloom_filter_len = footer_offset - footer.bloom_filter_start;
         let mut bloom_filter_buffer = vec![0_u8; bloom_filter_len as usize];
         fd.read_exact(&mut bloom_filter_buffer)?;
 
@@ -56,23 +58,33 @@ impl SstIndex {
             keys,
             offsets,
             bloom_filter,
+            data_block_end: footer.index_block_start,
         })
     }
 
     /// Returns the start of the index range a key falls into, if the key is in the SSTable file on
     /// disk, otherwise None is returned.
-    pub fn range_search_start(&self, key: &str) -> Option<u64> {
+    pub fn range_search_start(&self, key: &str) -> Option<(u64, u64)> {
         if !self.bloom_filter.contains(key) {
             return None;
         }
 
-        let range_idx = self.search_key(key);
-        Some(self.offsets[range_idx])
+        let range_start_idx = self.search_key(key);
+        let search_offsets = if range_start_idx == self.offsets.len() - 1 {
+            (self.offsets[range_start_idx], self.data_block_end)
+        } else {
+            (
+                self.offsets[range_start_idx],
+                self.offsets[range_start_idx + 1],
+            )
+        };
+        Some(search_offsets)
     }
 
     fn search_key(&self, key: &str) -> usize {
         self.keys
             .partition_point(|edge| key >= edge)
-            .min(self.keys.len() - 1)
+            .min(self.keys.len())
+            .saturating_sub(1_usize)
     }
 }
