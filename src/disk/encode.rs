@@ -2,12 +2,22 @@ use crate::constants;
 use crate::memtable::inner::{MemtableNode, NodeData};
 use crate::util;
 
-pub fn encode_record(node: &MemtableNode) -> Vec<u8> {
+pub fn encode_memtable_node(node: &MemtableNode) -> Vec<u8> {
     let node_key = node.key.as_str();
     let (key_varint, varint_len) = util::encode_varint(node_key.len());
     match node.data {
         NodeData::Data(ref data) => encode_insert_record(node_key, &key_varint[..varint_len], data),
         NodeData::Tombstone => encode_tombstone_record(node_key, &key_varint[..varint_len]),
+    }
+}
+
+pub fn merge_encode_record(record: crate::disk::DiskRecord) -> Vec<u8> {
+    let key = record.key.as_str();
+    let (key_varint, varint_len) = util::encode_varint(key.len());
+
+    match record.data {
+        NodeData::Data(ref data) => encode_insert_record(key, &key_varint[..varint_len], data),
+        NodeData::Tombstone => unreachable!(),
     }
 }
 

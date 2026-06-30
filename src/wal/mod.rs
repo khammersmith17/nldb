@@ -56,7 +56,7 @@ impl Wal {
             self.flush()
         }
 
-        let log = encode::encode_record(node);
+        let log = encode::encode_memtable_node(node);
         self.buffer.extend(log);
     }
 
@@ -95,19 +95,6 @@ impl Iterator for WalIterator {
             return None;
         }
 
-        let log_header = self.buffer[self.offset];
-        self.offset += 1;
-
-        let record = match log_header {
-            constants::INSERT_LOG_HEADER => {
-                decode::decode_insert_log(&self.buffer, &mut self.offset)
-            }
-            constants::TOMBSTONE_LOG_HEADER => {
-                decode::decode_tombstone_log(&self.buffer, &mut self.offset)
-            }
-            _ => return None,
-        };
-
-        Some(record)
+        decode::decode_disk_record(&self.buffer, &mut self.offset)
     }
 }

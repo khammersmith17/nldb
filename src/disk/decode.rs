@@ -1,8 +1,20 @@
 use super::DiskRecord;
+use crate::constants;
 use crate::memtable::inner::NodeData;
 use crate::util;
 
-pub fn decode_insert_log(buffer: &[u8], offset: &mut usize) -> DiskRecord {
+pub fn decode_disk_record(buffer: &[u8], offset: &mut usize) -> Option<DiskRecord> {
+    let header = buffer[*offset];
+    *offset += 1;
+
+    match header {
+        constants::INSERT_LOG_HEADER => Some(decode_insert_log(buffer, offset)),
+        constants::TOMBSTONE_LOG_HEADER => Some(decode_tombstone_log(buffer, offset)),
+        _ => None,
+    }
+}
+
+fn decode_insert_log(buffer: &[u8], offset: &mut usize) -> DiskRecord {
     let (log_size, bytes_walked) = util::decode_varint(buffer, *offset);
     *offset += bytes_walked;
 
@@ -31,7 +43,7 @@ pub fn decode_insert_log(buffer: &[u8], offset: &mut usize) -> DiskRecord {
     }
 }
 
-pub fn decode_tombstone_log(buffer: &[u8], offset: &mut usize) -> DiskRecord {
+fn decode_tombstone_log(buffer: &[u8], offset: &mut usize) -> DiskRecord {
     let (log_size, bytes_walked) = util::decode_varint(buffer, *offset);
     *offset += bytes_walked;
 

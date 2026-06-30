@@ -4,6 +4,7 @@ use crate::constants;
 use crate::error::SSTableError;
 use crate::memtable::inner::{Blob, NodeData};
 use crate::util;
+use std::cmp::Ordering;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 
@@ -23,6 +24,27 @@ fn is_tombstone(header: u8) -> bool {
 pub struct DiskRecord {
     pub key: String,
     pub data: NodeData,
+}
+
+impl PartialEq for DiskRecord {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+impl Eq for DiskRecord {}
+
+// Sort based on Keys.
+impl PartialOrd for DiskRecord {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.key.cmp(&other.key))
+    }
+}
+
+impl Ord for DiskRecord {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
 }
 
 pub fn search_data_block(
@@ -46,10 +68,6 @@ pub fn search_data_block(
         offset += bytes_walked;
         let log_end = offset + log_size as usize;
 
-        if is_tombstone(header) {
-            return Err(SSTableError::Tombstone);
-        }
-
         let (key_size, bytes_walked) = util::decode_varint(&block_buffer, offset);
         offset += bytes_walked;
 
@@ -57,6 +75,10 @@ pub fn search_data_block(
         if !key.eq(search_key.as_bytes()) {
             offset = log_end;
             continue;
+        }
+
+        if is_tombstone(header) {
+            return Err(SSTableError::Tombstone);
         }
 
         offset += key_size as usize;

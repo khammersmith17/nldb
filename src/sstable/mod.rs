@@ -1,12 +1,17 @@
 pub mod bloom_filter;
+pub mod compaction_writer;
 pub mod encode;
 pub mod footer;
+pub mod iterator;
+use crate::constants;
 use crate::disk;
 use crate::error::SSTableError;
 use crate::memtable::inner::Blob;
 use crate::ssindex::SstIndex;
+use crate::util;
 use std::collections::VecDeque;
 use std::fs::File;
+use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -64,21 +69,35 @@ impl SSTableCache {
     }
 }
 
+fn validate_buffer_and_get_version(fd: &mut File) -> Result<u16, SSTableError> {
+    let mut header_buffer = vec![0_u8; 4];
+    fd.read_exact(&mut header_buffer)?;
+    if header_buffer != constants::NLDB_SSTABLE_HEADER {
+        return Err(SSTableError::InvalidSSTableFile);
+    }
+
+    let mut version_buffer = vec![0_u8; 2];
+    fd.read_exact(&mut version_buffer)?;
+    let version_arr = util::get_be_array2(version_buffer);
+    Ok(u16::from_be_bytes(version_arr))
+}
+
 pub struct SSTable {
-    index: SstIndex,
-    fd: File,
+    pub index: SstIndex,
+    pub fd: File,
+    version: u16,
 }
 
 impl SSTable {
-    pub fn from_path(file_name: PathBuf) -> std::io::Result<SSTable> {
-        let mut fd = File::open(file_name)?;
-        let index = SstIndex::from_disk_sstable(&mut fd)?;
-        Ok(SSTable { index, fd })
+    pub fn from_path(file_name: PathBuf) -> Result<SSTable, SSTableError> {
+        let fd = File::open(file_name)?;
+        Self::from_fd(fd)
     }
 
-    pub fn from_fd(mut fd: File) -> std::io::Result<SSTable> {
+    pub fn from_fd(mut fd: File) -> Result<SSTable, SSTableError> {
+        let version = validate_buffer_and_get_version(&mut fd)?;
         let index = SstIndex::from_disk_sstable(&mut fd)?;
-        Ok(SSTable { index, fd })
+        Ok(SSTable { index, fd, version })
     }
 
     pub fn search(&mut self, key: &str) -> Result<Blob, SSTableError> {
@@ -87,6 +106,10 @@ impl SSTable {
         };
 
         self.search_data_block(start, end, key)
+    }
+
+    pub fn read_data_section(&mut self) -> Vec<u8> {
+        todo!()
     }
 
     fn search_data_block(

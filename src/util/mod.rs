@@ -11,6 +11,12 @@ pub fn get_be_array8(buffer: &[u8], offset: usize) -> [u8; 8] {
         .expect("Invalid size slice when deserializing bloom filter")
 }
 
+pub fn get_be_array2(buffer: Vec<u8>) -> [u8; 2] {
+    buffer
+        .try_into()
+        .expect("Invalid size slice when deserializing bloom filter")
+}
+
 pub fn generate_wal_file_name() -> PathBuf {
     let start_ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)

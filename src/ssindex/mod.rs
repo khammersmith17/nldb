@@ -8,7 +8,7 @@ pub struct SstIndex {
     keys: Vec<String>,
     offsets: Vec<u64>,
     bloom_filter: BloomFilter,
-    data_block_end: u64,
+    pub data_block_end: u64,
 }
 
 /// Read the index table in from disk.
