@@ -5,6 +5,8 @@ use crate::sstable::{SSTable, SSTableCache, compaction_writer::CompactionWriter}
 use std::cmp::Ordering;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+use std::fs::{read_dir, remove_file};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::Receiver;
@@ -52,6 +54,27 @@ async fn tables_to_iterators(tables: Vec<Arc<Mutex<SSTable>>>) -> Vec<SSTableIte
 
     iters
 }
+
+/*
+* Generate iterators for all tables currently cached.
+*
+* Seed heap with one record per table.
+*
+* while heap not empty:
+*   pop the smallest node
+*
+*   clear any nodes from the heap that have the same key
+*   cleared nodes are replaced with the next node from the same table
+*
+*   smallest node is written to compaction writer
+*
+*   next node is taken from the iterator for the flushed node.
+*
+* Finish writing SSTable file.
+* Load next in memory SSTable.
+* Replace all cache SSTables with the compact SSTable.
+* Remove all stale SSTable disk files.
+* */
 pub async fn compaction_fn(mut receiver: Receiver<u8>, sstable_cache: SSTableCache) {
     while let Some(_singal) = receiver.recv().await {
         let tables = sstable_cache.clone_tables().await;
@@ -104,10 +127,34 @@ pub async fn compaction_fn(mut receiver: Receiver<u8>, sstable_cache: SSTableCac
             }
         }
 
-        let path = writer.finish().expect("Unable to flush compaction writer");
-        let sstable =
-            SSTable::from_path(path).expect("Unable to create in memory SSTable representation");
+        let new_table_path = writer.finish().expect("Unable to flush compaction writer");
+        let sstable = SSTable::from_path(new_table_path.clone())
+            .expect("Unable to create in memory SSTable representation");
 
         sstable_cache.replace_with_compact_table(sstable).await;
+
+        let dir =
+            read_dir(Path::new(".")).expect("Unable to read pwd to remove stale SSTable files.");
+
+        for entry in dir {
+            let entry = entry.expect("Unable to get directory entry");
+
+            let path = entry.path();
+
+            if new_table_path == path {
+                continue;
+            }
+
+            if !path.is_file() {
+                continue;
+            }
+            let Some(path_ext) = path.extension() else {
+                continue;
+            };
+
+            if path_ext == "sstable" {
+                remove_file(&path).expect("Unable to delete stale SSTable");
+            }
+        }
     }
 }
