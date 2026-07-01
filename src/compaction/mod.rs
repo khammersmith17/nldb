@@ -1,7 +1,9 @@
 use crate::disk::DiskRecord;
+use crate::memtable::inner::NodeData;
 use crate::sstable::iterator::SSTableIterator;
-use crate::sstable::{SSTable, SSTableCache};
+use crate::sstable::{SSTable, SSTableCache, compaction_writer::CompactionWriter};
 use std::cmp::Ordering;
+use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -53,10 +55,59 @@ async fn tables_to_iterators(tables: Vec<Arc<Mutex<SSTable>>>) -> Vec<SSTableIte
 pub async fn compaction_fn(mut receiver: Receiver<u8>, sstable_cache: SSTableCache) {
     while let Some(_singal) = receiver.recv().await {
         let tables = sstable_cache.clone_tables().await;
-        let mut iters = tables_to_iterators(tables).await.into_iter().enumerate();
+        let num_tables = tables.len();
+        let mut table_iters = tables_to_iterators(tables).await;
 
-        let mut heap: BinaryHeap<HeapNode> = BinaryHeap::new();
+        let mut writer =
+            CompactionWriter::new().expect("Unable to open SSTable file for CompactionWriter");
+        let mut heap: BinaryHeap<Reverse<HeapNode>> = BinaryHeap::new();
 
-        todo!()
+        for i in 0..num_tables {
+            if let Some(record) = table_iters[i].next() {
+                let heap_node = HeapNode::new(record, i);
+                heap.push(Reverse(heap_node));
+            }
+        }
+
+        while !heap.is_empty() {
+            let Some(Reverse(smallest)) = heap.pop() else {
+                break;
+            };
+
+            let smallest_key = &smallest.record.key;
+
+            while let Some(ref record_ref) = heap.peek() {
+                let inner_ref = &record_ref.0;
+                if &inner_ref.record.key != smallest_key {
+                    break;
+                }
+                let table_idx = inner_ref.table_idx;
+
+                heap.pop().unwrap();
+                if let Some(record) = table_iters[table_idx].next() {
+                    let heap_node = HeapNode::new(record, table_idx);
+                    heap.push(Reverse(heap_node));
+                }
+            }
+
+            let HeapNode {
+                record: disk_record,
+                table_idx,
+            } = smallest;
+
+            if matches!(disk_record.data, NodeData::Data(_)) {
+                let _ = writer.push(disk_record);
+            }
+
+            if let Some(record) = table_iters[table_idx].next() {
+                heap.push(Reverse(HeapNode::new(record, table_idx)));
+            }
+        }
+
+        let path = writer.finish().expect("Unable to flush compaction writer");
+        let sstable =
+            SSTable::from_path(path).expect("Unable to create in memory SSTable representation");
+
+        sstable_cache.replace_with_compact_table(sstable).await;
     }
 }

@@ -63,6 +63,12 @@ impl SSTableCache {
         todo!()
     }
 
+    pub async fn replace_with_compact_table(&self, new_table: SSTable) {
+        let mut cache_handle = self.cache.write().await;
+        cache_handle.clear();
+        cache_handle.push_front(Arc::new(Mutex::new(new_table)));
+    }
+
     pub async fn clone_tables(&self) -> Vec<Arc<Mutex<SSTable>>> {
         let handle = self.cache.read().await;
         handle.iter().cloned().collect()

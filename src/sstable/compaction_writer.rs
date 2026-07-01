@@ -10,13 +10,19 @@ use std::io::Write;
 use std::path::PathBuf;
 
 fn key_from_record_buffer(buffer: &[u8]) -> String {
-    let (key_len_varint, bytes_walked) = util::decode_varint(buffer, 0_usize);
+    // Get log size.
+    let (_, bytes_walked) = util::decode_varint(buffer, 1_usize);
+    // Walk past log size varint.
+    let offset = bytes_walked + 1;
 
-    unsafe {
-        String::from_utf8_unchecked(
-            buffer[bytes_walked..bytes_walked + key_len_varint as usize].to_vec(),
-        )
-    }
+    // Get key len.
+    let (key_len, bytes_walked) = util::decode_varint(buffer, offset);
+    // Get key start.
+    let key_start = offset + bytes_walked;
+    let key_end = key_start + key_len as usize;
+
+    // Parse string.
+    unsafe { String::from_utf8_unchecked(buffer[key_start..key_end].to_vec()) }
 }
 
 pub struct CompactionWriter {
@@ -50,6 +56,8 @@ impl CompactionWriter {
         })
     }
 
+    /// Push a data record into the SSTable file.
+    /// Expects a data record, not a tombstone record.
     pub fn push(&mut self, record: DiskRecord) -> std::io::Result<()> {
         self.bloom_filter.insert(record.key.as_str());
         let encoded_record = encode::merge_encode_record(record);
@@ -65,14 +73,18 @@ impl CompactionWriter {
 
         if self.write_buffer.len() + record_size >= self.write_buffer.capacity() {
             self.fd.write(&self.write_buffer)?;
+            self.write_buffer.clear();
         }
 
         self.write_buffer.extend(encoded_record);
+        self.disk_offset += record_size as u64;
 
         Ok(())
     }
 
+    /// Flush buffer, then write index block, and bloom filter.
     pub fn finish(mut self) -> std::io::Result<PathBuf> {
+        self.fd.write(&self.write_buffer)?;
         let index_block_start = self.disk_offset;
         let index_block_len = self.index.len();
         let index_block_buffer = encode_index_block(self.index);

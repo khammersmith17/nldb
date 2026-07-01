@@ -3,6 +3,7 @@ pub enum MemtableError {
     TableFull,
 }
 
+#[derive(Debug)]
 pub enum SSTableError {
     DiskRecordNotFound,
     IOError(std::io::Error),

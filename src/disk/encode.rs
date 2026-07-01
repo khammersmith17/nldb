@@ -17,7 +17,7 @@ pub fn merge_encode_record(record: crate::disk::DiskRecord) -> Vec<u8> {
 
     match record.data {
         NodeData::Data(ref data) => encode_insert_record(key, &key_varint[..varint_len], data),
-        NodeData::Tombstone => unreachable!(),
+        NodeData::Tombstone => unreachable!("Expected data record, got a tombstone record"),
     }
 }
 
