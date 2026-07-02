@@ -32,6 +32,17 @@ pub struct Wal {
 }
 
 impl Wal {
+    #[cfg(test)]
+    pub fn from_fd(fd: File) -> Wal {
+        let buffer = Vec::with_capacity(constants::DEFAULT_WAL_BUFFER_CAPACITY);
+        let last_flush = unix_ms();
+        Wal {
+            fd,
+            last_flush,
+            buffer,
+        }
+    }
+
     pub(crate) fn new() -> std::io::Result<Wal> {
         let wal_file_name = util::generate_wal_file_name();
         let fd = File::create_new(wal_file_name)?;

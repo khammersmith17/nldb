@@ -89,3 +89,107 @@ pub fn search_data_block(
     }
     Err(SSTableError::DiskRecordNotFound)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::disk::decode::decode_disk_record;
+    use crate::disk::encode::{encode_insert_record, encode_tombstone_record};
+    use crate::memtable::inner::NodeData;
+    use crate::util;
+
+    fn make_insert_record(key: &str, data: &[u8]) -> Vec<u8> {
+        let (key_varint, varint_len) = util::encode_varint(key.len());
+        encode_insert_record(key, &key_varint[..varint_len], data)
+    }
+
+    fn make_tombstone_record(key: &str) -> Vec<u8> {
+        let (key_varint, varint_len) = util::encode_varint(key.len());
+        encode_tombstone_record(key, &key_varint[..varint_len])
+    }
+
+    #[test]
+    fn insert_record_roundtrip() {
+        let key = "hello";
+        let data = b"world";
+        let buf = make_insert_record(key, data);
+
+        let mut offset = 0;
+        let record = decode_disk_record(&buf, &mut offset).unwrap();
+
+        assert_eq!(record.key, key);
+        assert!(matches!(record.data, NodeData::Data(ref d) if d == data));
+        assert_eq!(offset, buf.len());
+    }
+
+    #[test]
+    fn tombstone_record_roundtrip() {
+        let key = "deleted_key";
+        let buf = make_tombstone_record(key);
+
+        let mut offset = 0;
+        let record = decode_disk_record(&buf, &mut offset).unwrap();
+
+        assert_eq!(record.key, key);
+        assert!(matches!(record.data, NodeData::Tombstone));
+        assert_eq!(offset, buf.len());
+    }
+
+    #[test]
+    fn insert_record_empty_data() {
+        let key = "emptyval";
+        let buf = make_insert_record(key, b"");
+
+        let mut offset = 0;
+        let record = decode_disk_record(&buf, &mut offset).unwrap();
+
+        assert_eq!(record.key, key);
+        assert!(matches!(record.data, NodeData::Data(ref d) if d.is_empty()));
+    }
+
+    #[test]
+    fn insert_record_large_key_and_data() {
+        let key = "k".repeat(200);
+        let data = vec![0xAB_u8; 500];
+        let buf = make_insert_record(&key, &data);
+
+        let mut offset = 0;
+        let record = decode_disk_record(&buf, &mut offset).unwrap();
+
+        assert_eq!(record.key, key);
+        assert!(matches!(record.data, NodeData::Data(ref d) if *d == data));
+        assert_eq!(offset, buf.len());
+    }
+
+    #[test]
+    fn multiple_records_sequential_decode() {
+        let buf1 = make_insert_record("alpha", b"1");
+        let buf2 = make_tombstone_record("beta");
+        let buf3 = make_insert_record("gamma", b"3");
+
+        let mut combined = Vec::new();
+        combined.extend_from_slice(&buf1);
+        combined.extend_from_slice(&buf2);
+        combined.extend_from_slice(&buf3);
+
+        let mut offset = 0;
+        let r1 = decode_disk_record(&combined, &mut offset).unwrap();
+        let r2 = decode_disk_record(&combined, &mut offset).unwrap();
+        let r3 = decode_disk_record(&combined, &mut offset).unwrap();
+
+        assert_eq!(r1.key, "alpha");
+        assert!(matches!(r1.data, NodeData::Data(ref d) if d == b"1"));
+        assert_eq!(r2.key, "beta");
+        assert!(matches!(r2.data, NodeData::Tombstone));
+        assert_eq!(r3.key, "gamma");
+        assert!(matches!(r3.data, NodeData::Data(ref d) if d == b"3"));
+        assert_eq!(offset, combined.len());
+    }
+
+    #[test]
+    fn invalid_header_returns_none() {
+        let buf = [0xFF_u8, 0x00];
+        let mut offset = 0;
+        let result = decode_disk_record(&buf, &mut offset);
+        assert!(result.is_none());
+    }
+}

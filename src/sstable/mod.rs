@@ -91,7 +91,8 @@ fn validate_buffer_and_get_version(fd: &mut File) -> Result<u16, SSTableError> {
 pub struct SSTable {
     pub index: SstIndex,
     pub fd: File,
-    version: u16,
+    #[allow(unused)]
+    version: u16, // version for when SSTable file format changes.
 }
 
 impl SSTable {
@@ -114,10 +115,6 @@ impl SSTable {
         self.search_data_block(start, end, key)
     }
 
-    pub fn read_data_section(&mut self) -> Vec<u8> {
-        todo!()
-    }
-
     fn search_data_block(
         &mut self,
         start_offset: u64,
@@ -125,5 +122,70 @@ impl SSTable {
         key: &str,
     ) -> Result<Blob, SSTableError> {
         disk::search_data_block(&mut self.fd, start_offset, end_offset, key)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memtable::inner::{MemtableInner, NodeData};
+    use crate::sstable::encode::write_sstable;
+    use crate::wal::Wal;
+    use std::fs;
+
+    fn make_memtable_with_records(records: &[(&str, &[u8])]) -> (MemtableInner, PathBuf) {
+        let wal_path: PathBuf =
+            format!("test_sstable_wal_{:?}.log", std::thread::current().id()).into();
+        let fd = fs::File::create(&wal_path).unwrap();
+        let wal = Wal::from_fd(fd);
+        let mut table = MemtableInner {
+            arena: Vec::with_capacity(64),
+            max_size: usize::MAX,
+            root_node: None,
+            current_size: 0,
+            wal,
+        };
+        for (key, data) in records {
+            table
+                .insert(key.to_string(), NodeData::Data(data.to_vec()))
+                .unwrap();
+        }
+        (table, wal_path)
+    }
+
+    #[test]
+    fn roundtrip_search() {
+        let records = [
+            ("apple", b"fruit".as_slice()),
+            ("banana", b"yellow"),
+            ("cherry", b"red"),
+            ("date", b"sweet"),
+            ("elderberry", b"dark"),
+        ];
+
+        let sstable_path: PathBuf =
+            format!("test_roundtrip_{:?}.sstable", std::thread::current().id()).into();
+
+        let (table, wal_path) = make_memtable_with_records(&records);
+        {
+            let mut fd = fs::File::create(&sstable_path).unwrap();
+            write_sstable(&table, &mut fd).unwrap();
+        }
+
+        let _ = fs::remove_file(&wal_path);
+
+        let mut sstable = SSTable::from_path(sstable_path.clone()).unwrap();
+
+        for (key, expected_data) in &records {
+            let result = sstable.search(key).unwrap();
+            assert_eq!(result, *expected_data, "data mismatch for key {key}");
+        }
+
+        assert!(matches!(
+            sstable.search("notakey"),
+            Err(SSTableError::DiskRecordNotFound)
+        ));
+
+        let _ = fs::remove_file(&sstable_path);
     }
 }

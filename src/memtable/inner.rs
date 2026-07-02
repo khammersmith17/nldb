@@ -195,10 +195,10 @@ impl MemtableNode {
 
 pub struct MemtableInner {
     pub arena: Vec<MemtableNode>,
-    max_size: usize,
+    pub max_size: usize,
     pub root_node: Option<usize>,
     pub current_size: usize,
-    wal: Wal,
+    pub wal: Wal,
 }
 
 impl MemtableInner {
@@ -494,16 +494,46 @@ impl MemtableInner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::PathBuf;
 
-    fn make_memtable() -> MemtableInner {
-        let wal = Wal::new().unwrap();
-        MemtableInner {
+    struct TestMemtable {
+        inner: MemtableInner,
+        wal_path: PathBuf,
+    }
+
+    impl Drop for TestMemtable {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.wal_path);
+        }
+    }
+
+    impl std::ops::DerefMut for TestMemtable {
+        fn deref_mut(&mut self) -> &mut MemtableInner {
+            &mut self.inner
+        }
+    }
+
+    impl std::ops::Deref for TestMemtable {
+        type Target = MemtableInner;
+        fn deref(&self) -> &MemtableInner {
+            &self.inner
+        }
+    }
+
+    fn make_memtable() -> TestMemtable {
+        let thread_id = std::thread::current().id();
+        let wal_path: PathBuf = format!("test_wal_{thread_id:?}.log").into();
+        let fd = fs::File::create(&wal_path).unwrap();
+        let wal = Wal::from_fd(fd);
+        let inner = MemtableInner {
             arena: Vec::with_capacity(64),
             max_size: usize::MAX,
             root_node: None,
             current_size: 0,
             wal,
-        }
+        };
+        TestMemtable { inner, wal_path }
     }
 
     // Recursively checks RB invariants, returns the black-height of the subtree.
