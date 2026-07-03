@@ -6,5 +6,5 @@ edition = "2024"
 [dependencies]
 dash_cache = "0.1.0"
 memmap2 = "0.9.10"
-tokio = "1.52.3"
+tokio = {version = "1.52.3", features = [ "full" ] }
 uuid = "1.23.3"

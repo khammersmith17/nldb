@@ -1,6 +1,7 @@
+use crate::memtable::inner::Blob;
 #[derive(Debug)]
 pub enum MemtableError {
-    TableFull,
+    TableFull(String, Blob),
 }
 
 #[derive(Debug)]

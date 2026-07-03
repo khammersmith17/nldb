@@ -25,6 +25,7 @@ fn unix_ms() -> u128 {
         .as_millis()
 }
 
+#[derive(Debug)]
 pub struct Wal {
     fd: File,
     buffer: Vec<u8>,

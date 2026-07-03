@@ -16,14 +16,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
+#[derive(Clone)]
 pub struct SSTableCache {
     cache: Arc<RwLock<VecDeque<Arc<Mutex<SSTable>>>>>,
+    pub compaction_rate: usize,
 }
 
 impl SSTableCache {
-    pub fn new() -> SSTableCache {
+    pub fn new(compaction_rate: usize) -> SSTableCache {
         let cache = Arc::new(RwLock::new(VecDeque::new()));
-        SSTableCache { cache }
+        SSTableCache {
+            cache,
+            compaction_rate,
+        }
     }
 
     pub async fn search(&self, key: &str) -> Result<Blob, SSTableError> {
@@ -57,10 +62,6 @@ impl SSTableCache {
         };
 
         len
-    }
-
-    pub async fn pop(&self) -> (SSTable, usize) {
-        todo!()
     }
 
     pub async fn replace_with_compact_table(&self, new_table: SSTable) {

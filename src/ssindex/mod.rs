@@ -83,7 +83,7 @@ impl SstIndex {
 
     fn search_key(&self, key: &str) -> usize {
         self.keys
-            .partition_point(|edge| key >= edge)
+            .partition_point(|edge| key >= edge.as_str())
             .min(self.keys.len())
             .saturating_sub(1_usize)
     }

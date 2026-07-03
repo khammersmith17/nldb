@@ -1,11 +1,18 @@
+use crate::compaction::CompactionSignal;
 use crate::disk::DiskRecord;
 use crate::error::MemtableError;
 use crate::sstable;
+use crate::util;
 use crate::wal::Wal;
 use crate::wal::WalIterator;
 use std::cmp::Ordering;
 use std::fs::File;
 use std::path::Path;
+use std::sync::{
+    Arc,
+    atomic::{self, AtomicBool},
+};
+use tokio::sync::mpsc::Sender;
 
 /*
   1. Every node is either red or black
@@ -32,6 +39,31 @@ use std::path::Path;
   - Case 3: Sibling is black, near child red, far child black → rotate sibling, reduces to Case 4
   - Case 4: Sibling is black, far child red → rotate parent, done
 * */
+
+pub fn flush_memtable(
+    memtable: MemtableInner,
+    signal: Sender<CompactionSignal>,
+    poisoned_flag: Arc<AtomicBool>,
+) {
+    let pathname = util::generate_sstable_file_name();
+    let Ok(mut fd) = File::create(&pathname) else {
+        poisoned_flag.swap(true, atomic::Ordering::Release);
+        return;
+    };
+
+    match flush_memtable_inner(&mut fd, memtable) {
+        Ok(_) => {
+            let _ = signal.blocking_send(CompactionSignal::LoadSSTable(pathname));
+        }
+        Err(_) => {
+            poisoned_flag.swap(true, atomic::Ordering::Release);
+        }
+    }
+}
+
+fn flush_memtable_inner(fd: &mut File, memtable: MemtableInner) -> std::io::Result<()> {
+    memtable.flush_to_disk(fd)
+}
 
 // Determine inner vs outer child.
 #[inline]
@@ -193,6 +225,7 @@ impl MemtableNode {
     }
 }
 
+#[derive(Debug)]
 pub struct MemtableInner {
     pub arena: Vec<MemtableNode>,
     pub max_size: usize,
@@ -237,17 +270,18 @@ impl MemtableInner {
         self.arena.len() == self.arena.capacity() || self.current_size >= self.max_size
     }
 
-    pub fn flush_to_disk(self, fd: &mut File) -> std::io::Result<Self> {
-        sstable::encode::write_sstable(&self, fd)?;
-        let max_size = self.max_size;
-        let max_nodes = self.arena.len();
-        Self::new(max_size, max_nodes)
+    pub fn flush_to_disk(self, fd: &mut File) -> std::io::Result<()> {
+        sstable::encode::write_sstable(self, fd)?;
+        Ok(())
     }
 
     // If full -> flush.
     pub fn insert(&mut self, key: String, value: NodeData) -> Result<(), MemtableError> {
         if self.full() {
-            return Err(MemtableError::TableFull);
+            let NodeData::Data(blob) = value else {
+                unreachable!()
+            };
+            return Err(MemtableError::TableFull(key, blob));
         }
 
         let node = MemtableNode::new(key, value);

@@ -7,9 +7,15 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::fs::{read_dir, remove_file};
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::Receiver;
+
+pub enum CompactionSignal {
+    Shutdown,
+    LoadSSTable(PathBuf),
+}
 
 /*
 * Waits for signal from db thread.
@@ -75,86 +81,115 @@ async fn tables_to_iterators(tables: Vec<Arc<Mutex<SSTable>>>) -> Vec<SSTableIte
 * Replace all cache SSTables with the compact SSTable.
 * Remove all stale SSTable disk files.
 * */
-pub async fn compaction_fn(mut receiver: Receiver<u8>, sstable_cache: SSTableCache) {
-    while let Some(_singal) = receiver.recv().await {
-        let tables = sstable_cache.clone_tables().await;
-        let num_tables = tables.len();
-        let mut table_iters = tables_to_iterators(tables).await;
+pub async fn sstable_background(
+    mut receiver: Receiver<CompactionSignal>,
+    sstable_cache: SSTableCache,
+) {
+    while let Some(signal) = receiver.recv().await {
+        match signal {
+            CompactionSignal::LoadSSTable(path) => {
+                /*
+                 * Inser table.
+                 * If needed, run compaction.
+                 * Swap in new SSTable.
+                 * */
+                let sstable =
+                    SSTable::from_path(path.clone()).expect("Unable to read in SSTable file");
+                let current_len = sstable_cache.push(sstable).await;
+                if current_len >= sstable_cache.compaction_rate as usize {
+                    let tables = sstable_cache.clone_tables().await;
+                    let num_tables = tables.len();
+                    let table_iters = tables_to_iterators(tables).await;
+                    let compact_table = tokio::task::spawn_blocking(move || {
+                        run_compaction(table_iters, num_tables)
+                    })
+                    .await
+                    .expect("Unable to run compaction");
+                    cleanup(sstable_cache.clone(), compact_table, path).await;
+                }
+            }
+            CompactionSignal::Shutdown => return,
+        }
+    }
+}
 
-        let mut writer =
-            CompactionWriter::new().expect("Unable to open SSTable file for CompactionWriter");
-        let mut heap: BinaryHeap<Reverse<HeapNode>> = BinaryHeap::new();
+async fn cleanup(sstable_cache: SSTableCache, sstable: SSTable, new_table_path: PathBuf) {
+    sstable_cache.replace_with_compact_table(sstable).await;
 
-        for i in 0..num_tables {
-            if let Some(record) = table_iters[i].next() {
-                let heap_node = HeapNode::new(record, i);
+    let dir = read_dir(Path::new(".")).expect("Unable to read pwd to remove stale SSTable files.");
+
+    for entry in dir {
+        let entry = entry.expect("Unable to get directory entry");
+
+        let path = entry.path();
+
+        if new_table_path == path {
+            continue;
+        }
+
+        if !path.is_file() {
+            continue;
+        }
+        let Some(path_ext) = path.extension() else {
+            continue;
+        };
+
+        if path_ext == "sstable" {
+            remove_file(&path).expect("Unable to delete stale SSTable");
+        }
+    }
+}
+
+fn run_compaction(mut table_iters: Vec<SSTableIterator>, num_tables: usize) -> SSTable {
+    let mut writer =
+        CompactionWriter::new().expect("Unable to open SSTable file for CompactionWriter");
+    let mut heap: BinaryHeap<Reverse<HeapNode>> = BinaryHeap::new();
+
+    for i in 0..num_tables {
+        if let Some(record) = table_iters[i].next() {
+            let heap_node = HeapNode::new(record, i);
+            heap.push(Reverse(heap_node));
+        }
+    }
+
+    while !heap.is_empty() {
+        let Some(Reverse(smallest)) = heap.pop() else {
+            break;
+        };
+
+        let smallest_key = &smallest.record.key;
+
+        while let Some(ref record_ref) = heap.peek() {
+            let inner_ref = &record_ref.0;
+            if &inner_ref.record.key != smallest_key {
+                break;
+            }
+            let table_idx = inner_ref.table_idx;
+
+            heap.pop().unwrap();
+            if let Some(record) = table_iters[table_idx].next() {
+                let heap_node = HeapNode::new(record, table_idx);
                 heap.push(Reverse(heap_node));
             }
         }
 
-        while !heap.is_empty() {
-            let Some(Reverse(smallest)) = heap.pop() else {
-                break;
-            };
+        let HeapNode {
+            record: disk_record,
+            table_idx,
+        } = smallest;
 
-            let smallest_key = &smallest.record.key;
-
-            while let Some(ref record_ref) = heap.peek() {
-                let inner_ref = &record_ref.0;
-                if &inner_ref.record.key != smallest_key {
-                    break;
-                }
-                let table_idx = inner_ref.table_idx;
-
-                heap.pop().unwrap();
-                if let Some(record) = table_iters[table_idx].next() {
-                    let heap_node = HeapNode::new(record, table_idx);
-                    heap.push(Reverse(heap_node));
-                }
-            }
-
-            let HeapNode {
-                record: disk_record,
-                table_idx,
-            } = smallest;
-
-            if matches!(disk_record.data, NodeData::Data(_)) {
-                let _ = writer.push(disk_record);
-            }
-
-            if let Some(record) = table_iters[table_idx].next() {
-                heap.push(Reverse(HeapNode::new(record, table_idx)));
-            }
+        if matches!(disk_record.data, NodeData::Data(_)) {
+            let _ = writer.push(disk_record);
         }
 
-        let new_table_path = writer.finish().expect("Unable to flush compaction writer");
-        let sstable = SSTable::from_path(new_table_path.clone())
-            .expect("Unable to create in memory SSTable representation");
-
-        sstable_cache.replace_with_compact_table(sstable).await;
-
-        let dir =
-            read_dir(Path::new(".")).expect("Unable to read pwd to remove stale SSTable files.");
-
-        for entry in dir {
-            let entry = entry.expect("Unable to get directory entry");
-
-            let path = entry.path();
-
-            if new_table_path == path {
-                continue;
-            }
-
-            if !path.is_file() {
-                continue;
-            }
-            let Some(path_ext) = path.extension() else {
-                continue;
-            };
-
-            if path_ext == "sstable" {
-                remove_file(&path).expect("Unable to delete stale SSTable");
-            }
+        if let Some(record) = table_iters[table_idx].next() {
+            heap.push(Reverse(HeapNode::new(record, table_idx)));
         }
     }
+
+    let new_table_path = writer.finish().expect("Unable to flush compaction writer");
+    let sstable = SSTable::from_path(new_table_path.clone())
+        .expect("Unable to create in memory SSTable representation");
+
+    sstable
 }

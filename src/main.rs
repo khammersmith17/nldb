@@ -1,5 +1,7 @@
 pub mod compaction;
+pub mod config;
 pub mod constants;
+pub mod database;
 pub mod disk;
 pub mod error;
 pub mod memtable;

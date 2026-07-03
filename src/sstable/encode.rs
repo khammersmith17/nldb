@@ -36,7 +36,7 @@ pub fn encode_footer(
     buffer
 }
 
-pub fn write_sstable(table: &MemtableInner, fd: &mut File) -> std::io::Result<()> {
+pub fn write_sstable(table: MemtableInner, fd: &mut File) -> std::io::Result<()> {
     /*
      * Allocate an entire buffer of total size + number of records * 4 for variants.
      * DFS inorder to insert records in sorted order
@@ -49,7 +49,7 @@ pub fn write_sstable(table: &MemtableInner, fd: &mut File) -> std::io::Result<()
     fd.write(&constants::V0_HEADER.to_be_bytes())?;
 
     inorder_flush(
-        table,
+        &table,
         fd,
         table.root_node,
         &mut disk_size,
