@@ -1,10 +1,12 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
+pub mod immutable;
 pub(crate) mod inner;
 use crate::error::MemtableError;
 use inner::{Blob, MemtableInner, NodeData};
 use std::path::Path;
 
+#[derive(Debug)]
 pub struct Memtable {
     inner: Arc<RwLock<MemtableInner>>,
     max_size: usize,

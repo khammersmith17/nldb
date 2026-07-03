@@ -1,5 +1,5 @@
 use crate::disk::DiskRecord;
-use crate::memtable::inner::NodeData;
+use crate::memtable::{immutable::ImmutableMemtable, inner::NodeData};
 use crate::sstable::iterator::SSTableIterator;
 use crate::sstable::{SSTable, SSTableCache, compaction_writer::CompactionWriter};
 use std::cmp::Ordering;
@@ -17,13 +17,6 @@ pub enum CompactionSignal {
     LoadSSTable(PathBuf),
 }
 
-/*
-* Waits for signal from db thread.
-*
-* on signal:
-*   get a reference to all tables.
-*   while there are tables to merge.
-* */
 #[derive(PartialEq, Eq)]
 struct HeapNode {
     record: DiskRecord,
@@ -61,29 +54,10 @@ async fn tables_to_iterators(tables: Vec<Arc<Mutex<SSTable>>>) -> Vec<SSTableIte
     iters
 }
 
-/*
-* Generate iterators for all tables currently cached.
-*
-* Seed heap with one record per table.
-*
-* while heap not empty:
-*   pop the smallest node
-*
-*   clear any nodes from the heap that have the same key
-*   cleared nodes are replaced with the next node from the same table
-*
-*   smallest node is written to compaction writer
-*
-*   next node is taken from the iterator for the flushed node.
-*
-* Finish writing SSTable file.
-* Load next in memory SSTable.
-* Replace all cache SSTables with the compact SSTable.
-* Remove all stale SSTable disk files.
-* */
 pub async fn sstable_background(
     mut receiver: Receiver<CompactionSignal>,
     sstable_cache: SSTableCache,
+    immutable: ImmutableMemtable,
 ) {
     while let Some(signal) = receiver.recv().await {
         match signal {
@@ -96,6 +70,7 @@ pub async fn sstable_background(
                 let sstable =
                     SSTable::from_path(path.clone()).expect("Unable to read in SSTable file");
                 let current_len = sstable_cache.push(sstable).await;
+                immutable.clear().await;
                 if current_len >= sstable_cache.compaction_rate as usize {
                     let tables = sstable_cache.clone_tables().await;
                     let num_tables = tables.len();
@@ -140,6 +115,26 @@ async fn cleanup(sstable_cache: SSTableCache, sstable: SSTable, new_table_path: 
     }
 }
 
+/*
+* Generate iterators for all tables currently cached.
+*
+* Seed heap with one record per table.
+*
+* while heap not empty:
+*   pop the smallest node
+*
+*   clear any nodes from the heap that have the same key
+*   cleared nodes are replaced with the next node from the same table
+*
+*   smallest node is written to compaction writer
+*
+*   next node is taken from the iterator for the flushed node.
+*
+* Finish writing SSTable file.
+* Load next in memory SSTable.
+* Replace all cache SSTables with the compact SSTable.
+* Remove all stale SSTable disk files.
+* */
 fn run_compaction(mut table_iters: Vec<SSTableIterator>, num_tables: usize) -> SSTable {
     let mut writer =
         CompactionWriter::new().expect("Unable to open SSTable file for CompactionWriter");

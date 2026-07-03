@@ -1,6 +1,7 @@
 use crate::compaction::CompactionSignal;
 use crate::disk::DiskRecord;
 use crate::error::MemtableError;
+use crate::memtable::immutable::ImmutableMemtable;
 use crate::sstable;
 use crate::util;
 use crate::wal::Wal;
@@ -40,8 +41,8 @@ use tokio::sync::mpsc::Sender;
   - Case 4: Sibling is black, far child red → rotate parent, done
 * */
 
-pub fn flush_memtable(
-    memtable: MemtableInner,
+pub async fn flush_memtable(
+    immutable: ImmutableMemtable,
     signal: Sender<CompactionSignal>,
     poisoned_flag: Arc<AtomicBool>,
 ) {
@@ -51,7 +52,7 @@ pub fn flush_memtable(
         return;
     };
 
-    match flush_memtable_inner(&mut fd, memtable) {
+    match immutable.flush(&mut fd).await {
         Ok(_) => {
             let _ = signal.blocking_send(CompactionSignal::LoadSSTable(pathname));
         }
@@ -61,7 +62,7 @@ pub fn flush_memtable(
     }
 }
 
-fn flush_memtable_inner(fd: &mut File, memtable: MemtableInner) -> std::io::Result<()> {
+pub fn flush_memtable_inner(fd: &mut File, memtable: &MemtableInner) -> std::io::Result<()> {
     memtable.flush_to_disk(fd)
 }
 
@@ -270,8 +271,8 @@ impl MemtableInner {
         self.arena.len() == self.arena.capacity() || self.current_size >= self.max_size
     }
 
-    pub fn flush_to_disk(self, fd: &mut File) -> std::io::Result<()> {
-        sstable::encode::write_sstable(self, fd)?;
+    pub fn flush_to_disk(&self, fd: &mut File) -> std::io::Result<()> {
+        sstable::encode::write_sstable(&self, fd)?;
         Ok(())
     }
 

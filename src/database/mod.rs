@@ -3,6 +3,7 @@ use crate::config::NldbConfig;
 use crate::error::MemtableError;
 use crate::memtable::{
     Memtable,
+    immutable::ImmutableMemtable,
     inner::{Blob, flush_memtable},
 };
 use crate::sstable::SSTableCache;
@@ -11,12 +12,15 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::mpsc::{self, Sender};
 
+// TODO: Check poisoned flag every so often.
+
 pub struct NldbInner {
     memtable: Memtable,
     sstable_cache: SSTableCache,
     cache: DashCache<String, Blob>,
     poisoned: Arc<AtomicBool>,
     signal: Sender<CompactionSignal>,
+    immutable: ImmutableMemtable,
 }
 
 impl NldbInner {
@@ -31,14 +35,19 @@ impl NldbInner {
         let sstable_cache = SSTableCache::new(config.compaction_rate as usize);
         let poisoned = Arc::new(AtomicBool::new(false));
         let (signal, receiver) = mpsc::channel::<CompactionSignal>(5);
-        let _compaction_handle =
-            tokio::task::spawn(sstable_background(receiver, sstable_cache.clone()));
+        let immutable = ImmutableMemtable::new();
+        let _compaction_handle = tokio::task::spawn(sstable_background(
+            receiver,
+            sstable_cache.clone(),
+            immutable.clone(),
+        ));
         NldbInner {
             memtable,
             sstable_cache,
             cache,
             poisoned,
             signal,
+            immutable,
         }
     }
 
@@ -109,8 +118,11 @@ impl NldbInner {
             .expect("More than one strong count of full table")
             .into_inner();
 
+        self.immutable.insert(table).await;
+
         // Pass the table off to be flushed.
-        tokio::task::spawn_blocking(move || flush_memtable(table, signal, flag));
+        let immutable = self.immutable.clone();
+        tokio::task::spawn_blocking(move || flush_memtable(immutable, signal, flag));
     }
 }
 
