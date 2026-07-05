@@ -7,6 +7,7 @@ use crate::constants;
 use crate::disk;
 use crate::error::SSTableError;
 use crate::memtable::inner::Blob;
+use crate::restart::SSTableArtifact;
 use crate::ssindex::SstIndex;
 use crate::util;
 use std::collections::VecDeque;
@@ -25,6 +26,28 @@ pub struct SSTableCache {
 impl SSTableCache {
     pub fn new(compaction_rate: usize) -> SSTableCache {
         let cache = Arc::new(RwLock::new(VecDeque::new()));
+        SSTableCache {
+            cache,
+            compaction_rate,
+        }
+    }
+
+    /// Read in SSTables from disk on restart. Tables are sorted from newest to oldest by `[crate::restart]` module.
+    /// They are then read in order and deserialized.
+    pub fn from_restart(disk_tables: Vec<SSTableArtifact>, compaction_rate: usize) -> SSTableCache {
+        let mut inner_cache: VecDeque<Arc<Mutex<SSTable>>> =
+            VecDeque::with_capacity(disk_tables.len());
+
+        for table_meta in disk_tables.into_iter() {
+            let SSTableArtifact { filename, .. } = table_meta;
+            let read_table: SSTable =
+                SSTable::from_path(filename).expect("Unable to read SSTable on restart");
+            let wrapped_table: Arc<Mutex<SSTable>> = Arc::new(Mutex::new(read_table));
+            inner_cache.push_back(wrapped_table);
+        }
+
+        let cache = Arc::new(RwLock::new(inner_cache));
+
         SSTableCache {
             cache,
             compaction_rate,
