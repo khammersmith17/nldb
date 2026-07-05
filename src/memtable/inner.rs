@@ -1,4 +1,4 @@
-use crate::compaction::CompactionSignal;
+use crate::compaction::{CompactionSignal, SSTableLoadAck};
 use crate::disk::DiskRecord;
 use crate::error::MemtableError;
 use crate::memtable::immutable::ImmutableMemtable;
@@ -13,7 +13,19 @@ use std::sync::{
     Arc,
     atomic::{self, AtomicBool},
 };
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{Receiver, Sender};
+
+#[derive(Debug, PartialOrd, PartialEq)]
+pub enum MemtableQuery {
+    Data(Blob),
+    Tombstone,
+    None,
+}
+
+pub enum MemtableFlushSignal {
+    Flush,
+    Shutdown,
+}
 
 /*
   1. Every node is either red or black
@@ -41,28 +53,45 @@ use tokio::sync::mpsc::Sender;
   - Case 4: Sibling is black, far child red → rotate parent, done
 * */
 
+// Flush a full memtable and send signal to background compaction thread to read in the new SSTable
+// file and push it onto the SSTable cache.
 pub async fn flush_memtable(
     immutable: ImmutableMemtable,
     signal: Sender<CompactionSignal>,
     poisoned_flag: Arc<AtomicBool>,
+    mut flush_recv: Receiver<MemtableFlushSignal>,
+    mut sstable_load_ack: Receiver<SSTableLoadAck>,
 ) {
-    let pathname = util::generate_sstable_file_name();
-    let Ok(mut fd) = File::create(&pathname) else {
-        poisoned_flag.swap(true, atomic::Ordering::Release);
-        return;
-    };
-
-    match immutable.flush(&mut fd).await {
-        Ok(_) => {
-            let _ = signal.blocking_send(CompactionSignal::LoadSSTable(pathname));
+    while let Some(memtable_signal) = flush_recv.recv().await {
+        if matches!(memtable_signal, MemtableFlushSignal::Shutdown) {
+            return;
         }
-        Err(_) => {
+
+        let pathname = util::generate_sstable_file_name();
+        let Ok(mut fd) = File::create(&pathname) else {
             poisoned_flag.swap(true, atomic::Ordering::Release);
+            return;
+        };
+
+        match immutable.flush(&mut fd).await {
+            Ok(_) => {
+                let _ = signal.send(CompactionSignal::LoadSSTable(pathname)).await;
+                // Wait for Ack in the case that multiple immutable tables are queued for flush.
+                // This is to avoid race conditions of attempting to flush an immutable memtable
+                // while the previous SSTable index is not yet read into memory for reads.
+                let _ = sstable_load_ack
+                    .recv()
+                    .await
+                    .expect("Unable to receive ack loaded SSTable");
+            }
+            Err(_) => {
+                poisoned_flag.swap(true, atomic::Ordering::Release);
+            }
         }
     }
 }
 
-pub fn flush_memtable_inner(fd: &mut File, memtable: &MemtableInner) -> std::io::Result<()> {
+pub fn flush_memtable_inner(fd: &mut File, memtable: Arc<MemtableInner>) -> std::io::Result<()> {
     memtable.flush_to_disk(fd)
 }
 
@@ -277,12 +306,11 @@ impl MemtableInner {
     }
 
     // If full -> flush.
+    // Return the write request back out to the caller. The caller rotates the table, and then
+    // calls again. The next write will then succeed.
     pub fn insert(&mut self, key: String, value: NodeData) -> Result<(), MemtableError> {
         if self.full() {
-            let NodeData::Data(blob) = value else {
-                unreachable!()
-            };
-            return Err(MemtableError::TableFull(key, blob));
+            return Err(MemtableError::TableFull(key, value));
         }
 
         let node = MemtableNode::new(key, value);
@@ -491,12 +519,14 @@ impl MemtableInner {
     }
 
     // Always returned owned copy of the data segment.
-    pub fn get(&self, key: &str) -> Option<Blob> {
-        let node_idx = self.get_search(key)?;
+    pub fn get(&self, key: &str) -> MemtableQuery {
+        let Some(node_idx) = self.get_search(key) else {
+            return MemtableQuery::None;
+        };
         let node_data = &self.arena[node_idx].data;
         match node_data {
-            NodeData::Data(data) => Some(data.clone()),
-            NodeData::Tombstone => None,
+            NodeData::Data(data) => MemtableQuery::Data(data.clone()),
+            NodeData::Tombstone => MemtableQuery::Tombstone,
         }
     }
 
@@ -523,6 +553,28 @@ impl MemtableInner {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+impl MemtableInner {
+    pub fn new_for_test() -> (MemtableInner, std::path::PathBuf) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let thread_id = std::thread::current().id();
+        let wal_path: std::path::PathBuf =
+            format!("test_wal_{thread_id:?}_{id}.log").into();
+        let fd = std::fs::File::create(&wal_path).unwrap();
+        let wal = Wal::from_fd(fd);
+        let inner = MemtableInner {
+            arena: Vec::with_capacity(64),
+            max_size: usize::MAX,
+            root_node: None,
+            current_size: 0,
+            wal,
+        };
+        (inner, wal_path)
     }
 }
 
@@ -616,8 +668,8 @@ mod tests {
         let mut t = make_memtable();
         t.insert("hello".to_string(), NodeData::Data(b"world".to_vec()))
             .unwrap();
-        assert_eq!(t.get("hello"), Some(b"world".to_vec()));
-        assert_eq!(t.get("missing"), None);
+        assert_eq!(t.get("hello"), MemtableQuery::Data(b"world".to_vec()));
+        assert_eq!(t.get("missing"), MemtableQuery::None);
     }
 
     #[test]
@@ -627,7 +679,7 @@ mod tests {
             .unwrap();
         t.insert("key".to_string(), NodeData::Data(b"v2".to_vec()))
             .unwrap();
-        assert_eq!(t.get("key"), Some(b"v2".to_vec()));
+        assert_eq!(t.get("key"), MemtableQuery::Data(b"v2".to_vec()));
     }
 
     #[test]
@@ -727,7 +779,7 @@ mod tests {
         for k in keys {
             assert_eq!(
                 t.get(k),
-                Some(vec![*k.as_bytes().first().unwrap()]),
+                MemtableQuery::Data(vec![*k.as_bytes().first().unwrap()]),
                 "Missing key {k}"
             );
         }

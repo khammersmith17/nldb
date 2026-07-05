@@ -10,11 +10,15 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{Receiver, Sender};
 
 pub enum CompactionSignal {
     Shutdown,
     LoadSSTable(PathBuf),
+}
+
+pub enum SSTableLoadAck {
+    Done,
 }
 
 #[derive(PartialEq, Eq)]
@@ -58,6 +62,7 @@ pub async fn sstable_background(
     mut receiver: Receiver<CompactionSignal>,
     sstable_cache: SSTableCache,
     immutable: ImmutableMemtable,
+    sstable_ack: Sender<SSTableLoadAck>,
 ) {
     while let Some(signal) = receiver.recv().await {
         match signal {
@@ -67,21 +72,25 @@ pub async fn sstable_background(
                  * If needed, run compaction.
                  * Swap in new SSTable.
                  * */
-                let sstable =
-                    SSTable::from_path(path.clone()).expect("Unable to read in SSTable file");
+                let sstable = SSTable::from_path(path).expect("Unable to read in SSTable file");
                 let current_len = sstable_cache.push(sstable).await;
-                immutable.clear().await;
+                immutable.pop().await;
                 if current_len >= sstable_cache.compaction_rate as usize {
                     let tables = sstable_cache.clone_tables().await;
                     let num_tables = tables.len();
                     let table_iters = tables_to_iterators(tables).await;
-                    let compact_table = tokio::task::spawn_blocking(move || {
-                        run_compaction(table_iters, num_tables)
-                    })
-                    .await
-                    .expect("Unable to run compaction");
-                    cleanup(sstable_cache.clone(), compact_table, path).await;
+                    let (compact_table, compact_table_path) =
+                        tokio::task::spawn_blocking(move || {
+                            run_compaction(table_iters, num_tables)
+                        })
+                        .await
+                        .expect("Unable to run compaction");
+                    cleanup(sstable_cache.clone(), compact_table, compact_table_path).await;
                 }
+                sstable_ack
+                    .send(SSTableLoadAck::Done)
+                    .await
+                    .expect("Unable to send ack to signal SSTable is loaded");
             }
             CompactionSignal::Shutdown => return,
         }
@@ -135,7 +144,7 @@ async fn cleanup(sstable_cache: SSTableCache, sstable: SSTable, new_table_path: 
 * Replace all cache SSTables with the compact SSTable.
 * Remove all stale SSTable disk files.
 * */
-fn run_compaction(mut table_iters: Vec<SSTableIterator>, num_tables: usize) -> SSTable {
+fn run_compaction(mut table_iters: Vec<SSTableIterator>, num_tables: usize) -> (SSTable, PathBuf) {
     let mut writer =
         CompactionWriter::new().expect("Unable to open SSTable file for CompactionWriter");
     let mut heap: BinaryHeap<Reverse<HeapNode>> = BinaryHeap::new();
@@ -186,5 +195,5 @@ fn run_compaction(mut table_iters: Vec<SSTableIterator>, num_tables: usize) -> S
     let sstable = SSTable::from_path(new_table_path.clone())
         .expect("Unable to create in memory SSTable representation");
 
-    sstable
+    (sstable, new_table_path)
 }

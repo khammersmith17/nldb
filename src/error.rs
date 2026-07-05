@@ -1,7 +1,7 @@
-use crate::memtable::inner::Blob;
+use crate::memtable::inner::NodeData;
 #[derive(Debug)]
 pub enum MemtableError {
-    TableFull(String, Blob),
+    TableFull(String, NodeData),
 }
 
 #[derive(Debug)]

@@ -3,7 +3,7 @@ use tokio::sync::RwLock;
 pub mod immutable;
 pub(crate) mod inner;
 use crate::error::MemtableError;
-use inner::{Blob, MemtableInner, NodeData};
+use inner::{Blob, MemtableInner, MemtableQuery, NodeData};
 use std::path::Path;
 
 #[derive(Debug)]
@@ -45,7 +45,7 @@ impl Memtable {
         Ok(())
     }
 
-    pub async fn get(&self, key: &str) -> Option<Blob> {
+    pub async fn get(&self, key: &str) -> MemtableQuery {
         let handle = self.inner.read().await;
         handle.get(key)
     }
@@ -56,10 +56,12 @@ impl Memtable {
         handle.insert(key, tombstone)
     }
 
-    pub async fn rotate(&self) -> std::io::Result<Arc<RwLock<MemtableInner>>> {
+    pub async fn rotate(&self) -> std::io::Result<MemtableInner> {
         let mut handle = self.inner.write().await;
-        let full_table = Arc::clone(&self.inner);
-        *handle = MemtableInner::new(self.max_size, self.max_nodes)?;
+        let full_table = std::mem::replace(
+            &mut *handle,
+            MemtableInner::new(self.max_size, self.max_nodes)?,
+        );
         Ok(full_table)
     }
 }
