@@ -2,10 +2,21 @@ use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
+/*
+* Conditions that define a valid restart:
+*   At least one SSTable on disk
+*   OR
+*   At most one Wal file representing the memtable at the time of shutdown/failure.
+*
+*
+*   The SSTables will be sorted in inverse order of timestamp, parsed from the filename.
+*   The single Wal file invariant is conditioned on Wal files being deleted after the associated
+*   memtable is written out to a SSTable file on disk.
+* */
+
 enum DatabaseFile {
     Wal,
     SSTable,
-    Other,
 }
 
 impl DatabaseFile {
@@ -23,7 +34,7 @@ impl DatabaseFile {
             {
                 Some(DatabaseFile::Wal)
             }
-            _ => Some(DatabaseFile::Other),
+            _ => None,
         }
     }
 }
@@ -110,7 +121,7 @@ pub(crate) fn scan_directory(dir: &Path) -> (Option<Vec<SSTableArtifact>>, Optio
     let mut wal_files: Vec<WalArtifact> = Vec::new();
     let mut sstable_files: Vec<SSTableArtifact> = Vec::new();
 
-    for entry in WalkDir::new(dir).into_iter() {
+    for entry in WalkDir::new(dir).max_depth(1).into_iter() {
         let entry = entry.expect("Unable to acquire entry");
         let path = entry.path();
 
@@ -124,15 +135,21 @@ pub(crate) fn scan_directory(dir: &Path) -> (Option<Vec<SSTableArtifact>>, Optio
             DatabaseFile::SSTable => {
                 sstable_files.push(SSTableArtifact::new(path.to_path_buf()));
             }
-            _ => continue,
         }
     }
 
-    // Sort SSTables from newest to oldest, as this is how they will be read into SSTableCache.
+    // Sort SSTables from newest to oldestk (reverse Ord), as this is how they will be read into SSTableCache.
     sstable_files.sort_by(|a, b| b.cmp(a));
+    let sstable = if sstable_files.is_empty() {
+        None
+    } else {
+        Some(sstable_files)
+    };
+
+    wal_files.sort();
     let w = wal_files.pop();
 
-    (Some(sstable_files), w)
+    (sstable, w)
 }
 
 pub fn get_restart_state() -> (Option<Vec<SSTableArtifact>>, Option<WalArtifact>) {
@@ -173,7 +190,7 @@ mod tests {
         let dir = TempDir::new();
         let (sstables, wal) = scan_directory(&dir.0);
         drop(dir);
-        assert!(sstables.unwrap().is_empty());
+        assert!(sstables.is_none());
         assert!(wal.is_none());
     }
 
@@ -219,7 +236,7 @@ mod tests {
         dir.create("config.json");
         let (sstables, wal) = scan_directory(&dir.0);
         drop(dir);
-        assert!(sstables.unwrap().is_empty());
+        assert!(sstables.is_none());
         assert!(wal.is_none());
     }
 
@@ -229,7 +246,7 @@ mod tests {
         dir.create("other.log");
         let (sstables, wal) = scan_directory(&dir.0);
         drop(dir);
-        assert!(sstables.unwrap().is_empty());
+        assert!(sstables.is_none());
         assert!(wal.is_none());
     }
 

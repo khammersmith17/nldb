@@ -1,3 +1,4 @@
+use crate::error::NldbError;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -54,6 +55,29 @@ pub fn encode_varint(mut value: usize) -> ([u8; 10], usize) {
         }
     }
     (buffer, idx)
+}
+
+pub fn decode_untrusted_varint(
+    buffer: &[u8],
+    mut offset: usize,
+) -> Result<(u64, usize), NldbError> {
+    let end = buffer.len();
+    let mut varint = 0_u64;
+    let start = offset;
+
+    loop {
+        if offset >= end || offset - start >= 10 {
+            return Err(NldbError::InvalidQuery);
+        }
+        let byte = buffer[offset];
+        varint |= ((byte & LEAST_BYTE_U8) as u64) << (7 * (offset - start));
+        offset += 1;
+
+        if byte & CONTINUATION == 0 {
+            break;
+        }
+    }
+    Ok((varint, offset - start))
 }
 
 pub fn decode_varint(buffer: &[u8], mut offset: usize) -> (u64, usize) {

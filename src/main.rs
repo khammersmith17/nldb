@@ -5,6 +5,7 @@ pub mod database;
 pub mod disk;
 pub mod error;
 pub mod memtable;
+pub mod parser;
 pub mod restart;
 pub mod ssindex;
 pub mod sstable;
