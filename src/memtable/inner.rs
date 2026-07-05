@@ -557,6 +557,13 @@ impl MemtableInner {
 }
 
 #[cfg(test)]
+impl MemtableNode {
+    pub fn new_for_test(key: String, data: NodeData) -> MemtableNode {
+        MemtableNode::new(key, data)
+    }
+}
+
+#[cfg(test)]
 impl MemtableInner {
     pub fn new_for_test() -> (MemtableInner, std::path::PathBuf) {
         use std::sync::atomic::{AtomicU64, Ordering};

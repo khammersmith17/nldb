@@ -72,6 +72,11 @@ impl Wal {
         self.buffer.extend(log);
     }
 
+    #[cfg(test)]
+    pub fn flush_for_test(&mut self) {
+        self.flush()
+    }
+
     fn flush(&mut self) {
         let _ = self.fd.write(&self.buffer);
         let _ = self.fd.flush();
@@ -108,5 +113,121 @@ impl Iterator for WalIterator {
         }
 
         decode::decode_disk_record(&self.buffer, &mut self.offset)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memtable::inner::{MemtableNode, NodeData};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static WAL_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    struct WalGuard(PathBuf);
+    impl Drop for WalGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+
+    fn make_wal() -> (Wal, WalGuard) {
+        let id = WAL_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let thread_id = std::thread::current().id();
+        let path: PathBuf = format!("test_wal_mod_{thread_id:?}_{id}.log").into();
+        let fd = fs::File::create(&path).unwrap();
+        (Wal::from_fd(fd), WalGuard(path))
+    }
+
+    fn data_node(key: &str, value: &[u8]) -> MemtableNode {
+        MemtableNode::new_for_test(key.to_string(), NodeData::Data(value.to_vec()))
+    }
+
+    fn tombstone_node(key: &str) -> MemtableNode {
+        MemtableNode::new_for_test(key.to_string(), NodeData::Tombstone)
+    }
+
+    #[test]
+    fn test_data_record_roundtrip() {
+        let (mut wal, guard) = make_wal();
+        wal.write_log(&data_node("hello", b"world"));
+        wal.flush_for_test();
+
+        let records: Vec<_> = WalIterator::new(&guard.0).unwrap().collect();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].key, "hello");
+        assert_eq!(records[0].data, NodeData::Data(b"world".to_vec()));
+    }
+
+    #[test]
+    fn test_tombstone_roundtrip() {
+        let (mut wal, guard) = make_wal();
+        wal.write_log(&tombstone_node("gone"));
+        wal.flush_for_test();
+
+        let records: Vec<_> = WalIterator::new(&guard.0).unwrap().collect();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].key, "gone");
+        assert_eq!(records[0].data, NodeData::Tombstone);
+    }
+
+    #[test]
+    fn test_multiple_records_in_order() {
+        let (mut wal, guard) = make_wal();
+        for i in 0..5u8 {
+            wal.write_log(&data_node(&format!("k{i}"), &[i]));
+        }
+        wal.flush_for_test();
+
+        let records: Vec<_> = WalIterator::new(&guard.0).unwrap().collect();
+        assert_eq!(records.len(), 5);
+        for i in 0..5u8 {
+            assert_eq!(records[i as usize].key, format!("k{i}"));
+            assert_eq!(records[i as usize].data, NodeData::Data(vec![i]));
+        }
+    }
+
+    #[test]
+    fn test_mixed_data_and_tombstones() {
+        let (mut wal, guard) = make_wal();
+        wal.write_log(&data_node("a", b"v1"));
+        wal.write_log(&tombstone_node("b"));
+        wal.write_log(&data_node("c", b"v3"));
+        wal.flush_for_test();
+
+        let records: Vec<_> = WalIterator::new(&guard.0).unwrap().collect();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].data, NodeData::Data(b"v1".to_vec()));
+        assert_eq!(records[1].data, NodeData::Tombstone);
+        assert_eq!(records[2].data, NodeData::Data(b"v3".to_vec()));
+    }
+
+    #[test]
+    fn test_buffer_not_written_before_flush() {
+        let (mut wal, guard) = make_wal();
+        wal.write_log(&data_node("k", b"v"));
+
+        // Nothing flushed yet — file should be empty.
+        let file_len = fs::metadata(&guard.0).unwrap().len();
+        assert_eq!(file_len, 0);
+
+        wal.flush_for_test();
+        let file_len = fs::metadata(&guard.0).unwrap().len();
+        assert!(file_len > 0);
+    }
+
+    #[test]
+    fn test_size_based_flush_trigger() {
+        let (mut wal, guard) = make_wal();
+        // First write fills buffer to ~= DEFAULT_WAL_BUFFER_SIZE.
+        let big_value = vec![0u8; constants::DEFAULT_WAL_BUFFER_SIZE];
+        wal.write_log(&data_node("k1", &big_value));
+        // Second write: needs_flush() fires, flushes the first record to disk.
+        wal.write_log(&data_node("k2", b"v"));
+
+        let file_len = fs::metadata(&guard.0).unwrap().len();
+        assert!(file_len > 0);
     }
 }

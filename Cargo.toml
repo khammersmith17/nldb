@@ -8,3 +8,4 @@ dash_cache = "0.1.0"
 memmap2 = "0.9.10"
 tokio = {version = "1.52.3", features = [ "full" ] }
 uuid = "1.23.3"
+walkdir = "2.5.0"

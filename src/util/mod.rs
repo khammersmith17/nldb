@@ -21,7 +21,7 @@ pub fn generate_wal_file_name() -> PathBuf {
     let start_ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_secs();
+        .as_nanos();
     format!("wal.{start_ts}.log").into()
 }
 
@@ -29,7 +29,7 @@ pub fn generate_sstable_file_name() -> PathBuf {
     let start_ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_secs();
+        .as_nanos();
     format!("{start_ts}.sstable").into()
 }
 
