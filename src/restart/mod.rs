@@ -106,7 +106,7 @@ impl Ord for SSTableArtifact {
     }
 }
 
-pub(crate) fn scan_directory(dir: &Path) -> Option<(Vec<SSTableArtifact>, Vec<WalArtifact>)> {
+pub(crate) fn scan_directory(dir: &Path) -> (Option<Vec<SSTableArtifact>>, Option<WalArtifact>) {
     let mut wal_files: Vec<WalArtifact> = Vec::new();
     let mut sstable_files: Vec<SSTableArtifact> = Vec::new();
 
@@ -128,18 +128,14 @@ pub(crate) fn scan_directory(dir: &Path) -> Option<(Vec<SSTableArtifact>, Vec<Wa
         }
     }
 
-    if wal_files.is_empty() && sstable_files.is_empty() {
-        return None;
-    };
-
     // Sort SSTables from newest to oldest, as this is how they will be read into SSTableCache.
     sstable_files.sort_by(|a, b| b.cmp(a));
-    wal_files.sort();
+    let w = wal_files.pop();
 
-    Some((sstable_files, wal_files))
+    (Some(sstable_files), w)
 }
 
-pub fn get_restart_state() -> Option<(Vec<SSTableArtifact>, Vec<WalArtifact>)> {
+pub fn get_restart_state() -> (Option<Vec<SSTableArtifact>>, Option<WalArtifact>) {
     scan_directory(Path::new("."))
 }
 
@@ -173,11 +169,12 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_directory_returns_none() {
+    fn test_empty_directory_returns_no_files() {
         let dir = TempDir::new();
-        let result = scan_directory(&dir.0);
+        let (sstables, wal) = scan_directory(&dir.0);
         drop(dir);
-        assert!(result.is_none());
+        assert!(sstables.unwrap().is_empty());
+        assert!(wal.is_none());
     }
 
     #[test]
@@ -185,10 +182,10 @@ mod tests {
         let dir = TempDir::new();
         dir.create("1000.sstable");
         dir.create("2000.sstable");
-        let result = scan_directory(&dir.0).unwrap();
+        let (sstables, wal) = scan_directory(&dir.0);
         drop(dir);
-        assert_eq!(result.0.len(), 2);
-        assert!(result.1.is_empty());
+        assert_eq!(sstables.unwrap().len(), 2);
+        assert!(wal.is_none());
     }
 
     #[test]
@@ -197,33 +194,22 @@ mod tests {
         dir.create("1000.sstable");
         dir.create("3000.sstable");
         dir.create("2000.sstable");
-        let (sstables, _) = scan_directory(&dir.0).unwrap();
+        let (sstables, _) = scan_directory(&dir.0);
         drop(dir);
+        let sstables = sstables.unwrap();
         assert_eq!(sstables[0].filename.file_name().unwrap(), "3000.sstable");
         assert_eq!(sstables[1].filename.file_name().unwrap(), "2000.sstable");
         assert_eq!(sstables[2].filename.file_name().unwrap(), "1000.sstable");
     }
 
     #[test]
-    fn test_wal_files_detected() {
+    fn test_wal_file_detected() {
         let dir = TempDir::new();
         dir.create("wal.1000.log");
-        let result = scan_directory(&dir.0).unwrap();
+        let (_, wal) = scan_directory(&dir.0);
         drop(dir);
-        assert_eq!(result.1.len(), 1);
-    }
-
-    #[test]
-    fn test_wals_sorted_oldest_first() {
-        let dir = TempDir::new();
-        dir.create("wal.3000.log");
-        dir.create("wal.1000.log");
-        dir.create("wal.2000.log");
-        let (_, wals) = scan_directory(&dir.0).unwrap();
-        drop(dir);
-        assert_eq!(wals[0].filename.file_name().unwrap(), "wal.1000.log");
-        assert_eq!(wals[1].filename.file_name().unwrap(), "wal.2000.log");
-        assert_eq!(wals[2].filename.file_name().unwrap(), "wal.3000.log");
+        assert!(wal.is_some());
+        assert_eq!(wal.unwrap().filename.file_name().unwrap(), "wal.1000.log");
     }
 
     #[test]
@@ -231,18 +217,20 @@ mod tests {
         let dir = TempDir::new();
         dir.create("notes.txt");
         dir.create("config.json");
-        let result = scan_directory(&dir.0);
+        let (sstables, wal) = scan_directory(&dir.0);
         drop(dir);
-        assert!(result.is_none());
+        assert!(sstables.unwrap().is_empty());
+        assert!(wal.is_none());
     }
 
     #[test]
     fn test_non_wal_log_files_ignored() {
         let dir = TempDir::new();
         dir.create("other.log");
-        let result = scan_directory(&dir.0);
+        let (sstables, wal) = scan_directory(&dir.0);
         drop(dir);
-        assert!(result.is_none());
+        assert!(sstables.unwrap().is_empty());
+        assert!(wal.is_none());
     }
 
     #[test]
@@ -250,9 +238,9 @@ mod tests {
         let dir = TempDir::new();
         dir.create("1000.sstable");
         dir.create("wal.2000.log");
-        let (sstables, wals) = scan_directory(&dir.0).unwrap();
+        let (sstables, wal) = scan_directory(&dir.0);
         drop(dir);
-        assert_eq!(sstables.len(), 1);
-        assert_eq!(wals.len(), 1);
+        assert_eq!(sstables.unwrap().len(), 1);
+        assert!(wal.is_some());
     }
 }
