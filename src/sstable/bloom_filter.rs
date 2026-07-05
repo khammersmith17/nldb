@@ -14,6 +14,7 @@ fn hash2(key: &str) -> u64 {
     hasher.finish()
 }
 
+#[derive(Debug)]
 pub struct BloomFilter {
     bits: Vec<u64>,
     num_bits: u64,

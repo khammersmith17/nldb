@@ -92,7 +92,9 @@ pub async fn flush_memtable(
 }
 
 pub fn flush_memtable_inner(fd: &mut File, memtable: Arc<MemtableInner>) -> std::io::Result<()> {
-    memtable.flush_to_disk(fd)
+    memtable.flush_to_disk(fd)?;
+    let path = memtable.wal.filename.clone();
+    std::fs::remove_file(path)
 }
 
 // Determine inner vs outer child.
@@ -570,10 +572,9 @@ impl MemtableInner {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
         let thread_id = std::thread::current().id();
-        let wal_path: std::path::PathBuf =
-            format!("test_wal_{thread_id:?}_{id}.log").into();
+        let wal_path: std::path::PathBuf = format!("test_wal_{thread_id:?}_{id}.log").into();
         let fd = std::fs::File::create(&wal_path).unwrap();
-        let wal = Wal::from_fd(fd);
+        let wal = Wal::from_fd_and_path(fd, wal_path.clone());
         let inner = MemtableInner {
             arena: Vec::with_capacity(64),
             max_size: usize::MAX,
@@ -619,7 +620,7 @@ mod tests {
         let thread_id = std::thread::current().id();
         let wal_path: PathBuf = format!("test_wal_{thread_id:?}.log").into();
         let fd = fs::File::create(&wal_path).unwrap();
-        let wal = Wal::from_fd(fd);
+        let wal = Wal::from_fd_and_path(fd, wal_path.clone());
         let inner = MemtableInner {
             arena: Vec::with_capacity(64),
             max_size: usize::MAX,

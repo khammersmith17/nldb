@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SSTableCache {
     cache: Arc<RwLock<VecDeque<Arc<Mutex<SSTable>>>>>,
     pub compaction_rate: usize,
@@ -112,6 +112,7 @@ fn validate_buffer_and_get_version(fd: &mut File) -> Result<u16, SSTableError> {
     Ok(u16::from_be_bytes(version_arr))
 }
 
+#[derive(Debug)]
 pub struct SSTable {
     pub index: SstIndex,
     pub fd: File,
@@ -161,7 +162,7 @@ mod tests {
         let wal_path: PathBuf =
             format!("test_sstable_wal_{:?}.log", std::thread::current().id()).into();
         let fd = fs::File::create(&wal_path).unwrap();
-        let wal = Wal::from_fd(fd);
+        let wal = Wal::from_fd_and_path(fd, wal_path.clone());
         let mut table = MemtableInner {
             arena: Vec::with_capacity(64),
             max_size: usize::MAX,

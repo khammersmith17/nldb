@@ -4,6 +4,7 @@ use crate::util;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 
+#[derive(Debug)]
 pub struct SstIndex {
     keys: Vec<String>,
     offsets: Vec<u64>,

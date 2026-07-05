@@ -7,6 +7,7 @@ use memmap2::{Mmap, MmapOptions};
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /*
@@ -30,29 +31,32 @@ pub struct Wal {
     fd: File,
     buffer: Vec<u8>,
     last_flush: u128,
+    pub filename: PathBuf,
 }
 
 impl Wal {
     #[cfg(test)]
-    pub fn from_fd(fd: File) -> Wal {
+    pub fn from_fd_and_path(fd: File, filename: PathBuf) -> Wal {
         let buffer = Vec::with_capacity(constants::DEFAULT_WAL_BUFFER_CAPACITY);
         let last_flush = unix_ms();
         Wal {
             fd,
             last_flush,
             buffer,
+            filename,
         }
     }
 
     pub(crate) fn new() -> std::io::Result<Wal> {
         let wal_file_name = util::generate_wal_file_name();
-        let fd = File::create_new(wal_file_name)?;
+        let fd = File::create_new(&wal_file_name)?;
         let buffer = Vec::with_capacity(constants::DEFAULT_WAL_BUFFER_CAPACITY);
         let last_flush = unix_ms();
         Ok(Wal {
             fd,
             last_flush,
             buffer,
+            filename: wal_file_name,
         })
     }
 
@@ -138,7 +142,7 @@ mod tests {
         let thread_id = std::thread::current().id();
         let path: PathBuf = format!("test_wal_mod_{thread_id:?}_{id}.log").into();
         let fd = fs::File::create(&path).unwrap();
-        (Wal::from_fd(fd), WalGuard(path))
+        (Wal::from_fd_and_path(fd, path.clone()), WalGuard(path))
     }
 
     fn data_node(key: &str, value: &[u8]) -> MemtableNode {

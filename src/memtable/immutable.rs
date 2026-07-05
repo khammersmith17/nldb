@@ -4,7 +4,7 @@ use std::fs::File;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ImmutableMemtable {
     table: Arc<RwLock<VecDeque<Arc<MemtableInner>>>>,
 }
