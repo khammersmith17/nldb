@@ -191,13 +191,13 @@ tree).
 ### File header (6 bytes)
 
 ```
-[74 72 68 66][version_u16_be]
-  "trhf"       currently 0x0000
+[78, 76, 68, 66][version_u16_be]
+  "NLDB"       currently 0x0000
 ```
 
 | Field   | Size | Description               |
 |---------|------|---------------------------|
-| magic   | 4    | `0x74 0x72 0x68 0x66` ("trhf") |
+| magic   | 4    | `0x78 0x76 0x68 0x66` ("NLDB") |
 | version | 2    | big-endian u16, currently `0` |
 
 ### Data block records

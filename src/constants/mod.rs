@@ -1,5 +1,5 @@
 // SSTABLE HEADER
-pub const NLDB_SSTABLE_HEADER: [u8; 4] = [116, 114, 104, 102];
+pub const NLDB_SSTABLE_HEADER: [u8; 4] = [78, 76, 68, 66];
 pub const V0_HEADER: u16 = 0_u16;
 pub const HEADER_SIZE: u64 = 6_u64;
 
