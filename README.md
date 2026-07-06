@@ -1,4 +1,4 @@
-This is a rather naive implementation of a LSM Tree style database for fun.
+This is an implementation (in all reality a rather naive one) of a LSM Tree style database for fun.
 
 Implementation status
 [X] memtable (red black tree)
@@ -6,10 +6,11 @@ Implementation status
 [X] sstable serialization with index blocks
 [X] bloom filter on disk and in memory
 [X] SSTable Index data strucutre on disk and in memory
-[ ] memtable rotation
-    [ ] handling reads on full in memory memtable until flushed
+[X] memtable rotation
+    [X] handling reads on full in memory memtable until flushed
 [X] compaction
 [X] reading from multiple SSTables on disk
+[X] database statements
 [ ] database API
 
 

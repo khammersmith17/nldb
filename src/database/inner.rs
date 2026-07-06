@@ -15,6 +15,7 @@ use tokio::sync::mpsc::{self, Sender};
 /// Inner memtable struct that holds all database implementation.
 /// On write/delete, if that memtable is full, it will return an error. On
 /// [MemtableError::TableFull], the table will be rotated out while being flushed.
+#[derive(Debug)]
 pub struct NldbInner {
     memtable: Memtable,
     sstable_cache: SSTableCache,

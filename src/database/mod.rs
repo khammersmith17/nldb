@@ -4,7 +4,7 @@ use crate::memtable::inner::Blob;
 use inner::NldbInner;
 use std::sync::Arc;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Nldb {
     inner: Arc<NldbInner>,
 }
