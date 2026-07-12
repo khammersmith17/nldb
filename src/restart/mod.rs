@@ -1,17 +1,23 @@
+pub mod worker;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 /*
 * Conditions that define a valid restart:
-*   At least one SSTable on disk
-*   OR
-*   At most one Wal file representing the memtable at the time of shutdown/failure.
+*   Any number of SSTable files and/or WAL files may be present on disk.
 *
+*   SSTables are sorted newest-first by timestamp (from filename) as this is the
+*   order they are loaded into the SSTable cache for reads.
 *
-*   The SSTables will be sorted in inverse order of timestamp, parsed from the filename.
-*   The single Wal file invariant is conditioned on Wal files being deleted after the associated
-*   memtable is written out to a SSTable file on disk.
+*   WAL files are sorted oldest-first by timestamp. All WAL files except the
+*   newest represent full memtables that were rotated but not yet flushed to
+*   SSTables before shutdown. The newest WAL file represents the active memtable
+*   at the time of shutdown, which may be partially filled.
+*
+*   The caller is responsible for deciding what to do with each set:
+*     - Full WALs (all but last): replay and flush to SSTable.
+*     - Active WAL (last): replay into the new active memtable.
 * */
 
 enum DatabaseFile {
@@ -117,7 +123,7 @@ impl Ord for SSTableArtifact {
     }
 }
 
-pub(crate) fn scan_directory(dir: &Path) -> (Option<Vec<SSTableArtifact>>, Option<WalArtifact>) {
+pub(crate) fn scan_directory(dir: &Path) -> (Vec<SSTableArtifact>, Vec<WalArtifact>) {
     let mut wal_files: Vec<WalArtifact> = Vec::new();
     let mut sstable_files: Vec<SSTableArtifact> = Vec::new();
 
@@ -140,19 +146,12 @@ pub(crate) fn scan_directory(dir: &Path) -> (Option<Vec<SSTableArtifact>>, Optio
 
     // Sort SSTables from newest to oldestk (reverse Ord), as this is how they will be read into SSTableCache.
     sstable_files.sort_by(|a, b| b.cmp(a));
-    let sstable = if sstable_files.is_empty() {
-        None
-    } else {
-        Some(sstable_files)
-    };
-
     wal_files.sort();
-    let w = wal_files.pop();
 
-    (sstable, w)
+    (sstable_files, wal_files)
 }
 
-pub fn get_restart_state() -> (Option<Vec<SSTableArtifact>>, Option<WalArtifact>) {
+pub fn get_restart_state() -> (Vec<SSTableArtifact>, Vec<WalArtifact>) {
     scan_directory(Path::new("."))
 }
 
@@ -188,10 +187,10 @@ mod tests {
     #[test]
     fn test_empty_directory_returns_no_files() {
         let dir = TempDir::new();
-        let (sstables, wal) = scan_directory(&dir.0);
+        let (sstables, wals) = scan_directory(&dir.0);
         drop(dir);
-        assert!(sstables.is_none());
-        assert!(wal.is_none());
+        assert!(sstables.is_empty());
+        assert!(wals.is_empty());
     }
 
     #[test]
@@ -199,10 +198,10 @@ mod tests {
         let dir = TempDir::new();
         dir.create("1000.sstable");
         dir.create("2000.sstable");
-        let (sstables, wal) = scan_directory(&dir.0);
+        let (sstables, wals) = scan_directory(&dir.0);
         drop(dir);
-        assert_eq!(sstables.unwrap().len(), 2);
-        assert!(wal.is_none());
+        assert_eq!(sstables.len(), 2);
+        assert!(wals.is_empty());
     }
 
     #[test]
@@ -213,7 +212,6 @@ mod tests {
         dir.create("2000.sstable");
         let (sstables, _) = scan_directory(&dir.0);
         drop(dir);
-        let sstables = sstables.unwrap();
         assert_eq!(sstables[0].filename.file_name().unwrap(), "3000.sstable");
         assert_eq!(sstables[1].filename.file_name().unwrap(), "2000.sstable");
         assert_eq!(sstables[2].filename.file_name().unwrap(), "1000.sstable");
@@ -223,10 +221,24 @@ mod tests {
     fn test_wal_file_detected() {
         let dir = TempDir::new();
         dir.create("wal.1000.log");
-        let (_, wal) = scan_directory(&dir.0);
+        let (_, wals) = scan_directory(&dir.0);
         drop(dir);
-        assert!(wal.is_some());
-        assert_eq!(wal.unwrap().filename.file_name().unwrap(), "wal.1000.log");
+        assert_eq!(wals.len(), 1);
+        assert_eq!(wals[0].filename.file_name().unwrap(), "wal.1000.log");
+    }
+
+    #[test]
+    fn test_multiple_wals_sorted_oldest_first() {
+        let dir = TempDir::new();
+        dir.create("wal.3000.log");
+        dir.create("wal.1000.log");
+        dir.create("wal.2000.log");
+        let (_, wals) = scan_directory(&dir.0);
+        drop(dir);
+        assert_eq!(wals.len(), 3);
+        assert_eq!(wals[0].filename.file_name().unwrap(), "wal.1000.log");
+        assert_eq!(wals[1].filename.file_name().unwrap(), "wal.2000.log");
+        assert_eq!(wals[2].filename.file_name().unwrap(), "wal.3000.log");
     }
 
     #[test]
@@ -234,20 +246,20 @@ mod tests {
         let dir = TempDir::new();
         dir.create("notes.txt");
         dir.create("config.json");
-        let (sstables, wal) = scan_directory(&dir.0);
+        let (sstables, wals) = scan_directory(&dir.0);
         drop(dir);
-        assert!(sstables.is_none());
-        assert!(wal.is_none());
+        assert!(sstables.is_empty());
+        assert!(wals.is_empty());
     }
 
     #[test]
     fn test_non_wal_log_files_ignored() {
         let dir = TempDir::new();
         dir.create("other.log");
-        let (sstables, wal) = scan_directory(&dir.0);
+        let (sstables, wals) = scan_directory(&dir.0);
         drop(dir);
-        assert!(sstables.is_none());
-        assert!(wal.is_none());
+        assert!(sstables.is_empty());
+        assert!(wals.is_empty());
     }
 
     #[test]
@@ -255,9 +267,9 @@ mod tests {
         let dir = TempDir::new();
         dir.create("1000.sstable");
         dir.create("wal.2000.log");
-        let (sstables, wal) = scan_directory(&dir.0);
+        let (sstables, wals) = scan_directory(&dir.0);
         drop(dir);
-        assert_eq!(sstables.unwrap().len(), 1);
-        assert!(wal.is_some());
+        assert_eq!(sstables.len(), 1);
+        assert_eq!(wals.len(), 1);
     }
 }

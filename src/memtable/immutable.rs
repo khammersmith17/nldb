@@ -1,8 +1,11 @@
-use super::inner::{MemtableInner, MemtableQuery, flush_memtable_inner};
+use super::inner::{MemtableFlushSignal, MemtableInner, MemtableQuery, flush_memtable_inner};
+use crate::config::NldbConfig;
+use crate::restart::{WalArtifact, worker::read_immutable_tables};
 use std::collections::VecDeque;
 use std::fs::File;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc::Sender;
 
 #[derive(Clone, Debug)]
 pub struct ImmutableMemtable {
@@ -10,7 +13,31 @@ pub struct ImmutableMemtable {
 }
 
 impl ImmutableMemtable {
-    pub fn new() -> ImmutableMemtable {
+    /// Newest wal file is assumed to not be present in this list.
+    /// Wal files passed here are assumed to be waiting for SSTable flush.
+    /// Thus, they get loaded into the immutable in memory queue.
+    pub fn new(
+        wal_files: Vec<WalArtifact>,
+        config: &NldbConfig,
+        flusher_signal: Sender<MemtableFlushSignal>,
+    ) -> ImmutableMemtable {
+        if wal_files.is_empty() {
+            return Self::new_empty();
+        }
+        let n_files = wal_files.len();
+        let table_inner = read_immutable_tables(&wal_files, config);
+        let table = Arc::new(RwLock::new(table_inner));
+
+        for _ in 0..n_files {
+            flusher_signal
+                .blocking_send(MemtableFlushSignal::Flush)
+                .expect("Unable to send flush signal to compaction worker");
+        }
+
+        ImmutableMemtable { table }
+    }
+
+    pub fn new_empty() -> ImmutableMemtable {
         let table = Arc::new(RwLock::new(VecDeque::new()));
         ImmutableMemtable { table }
     }
@@ -81,13 +108,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_returns_none() {
-        let imm = ImmutableMemtable::new();
+        let imm = ImmutableMemtable::new_empty();
         assert_eq!(imm.get("key").await, MemtableQuery::None);
     }
 
     #[tokio::test]
     async fn test_insert_and_get() {
-        let imm = ImmutableMemtable::new();
+        let imm = ImmutableMemtable::new_empty();
         let (inner, _guard) = make_inner(&[("k", NodeData::Data(b"v".to_vec()))]);
         imm.insert(inner).await;
         assert_eq!(imm.get("k").await, MemtableQuery::Data(b"v".to_vec()));
@@ -96,7 +123,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_newest_wins() {
-        let imm = ImmutableMemtable::new();
+        let imm = ImmutableMemtable::new_empty();
         let (inner_a, _ga) = make_inner(&[("k", NodeData::Data(b"v1".to_vec()))]);
         let (inner_b, _gb) = make_inner(&[("k", NodeData::Data(b"v2".to_vec()))]);
         imm.insert(inner_a).await; // older
@@ -106,7 +133,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tombstone_hides_older_data() {
-        let imm = ImmutableMemtable::new();
+        let imm = ImmutableMemtable::new_empty();
         let (inner_a, _ga) = make_inner(&[("k", NodeData::Data(b"v1".to_vec()))]);
         let (inner_b, _gb) = make_inner(&[("k", NodeData::Tombstone)]);
         imm.insert(inner_a).await; // older
@@ -116,7 +143,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pop_removes_oldest() {
-        let imm = ImmutableMemtable::new();
+        let imm = ImmutableMemtable::new_empty();
         let (inner_a, _ga) = make_inner(&[("only_a", NodeData::Data(b"v".to_vec()))]);
         let (inner_b, _gb) = make_inner(&[("only_b", NodeData::Data(b"v".to_vec()))]);
         imm.insert(inner_a).await; // older

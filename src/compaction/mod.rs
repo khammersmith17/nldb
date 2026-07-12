@@ -144,7 +144,10 @@ async fn cleanup(sstable_cache: SSTableCache, sstable: SSTable, new_table_path: 
 * Replace all cache SSTables with the compact SSTable.
 * Remove all stale SSTable disk files.
 * */
-pub(crate) fn run_compaction(mut table_iters: Vec<SSTableIterator>, num_tables: usize) -> (SSTable, PathBuf) {
+pub(crate) fn run_compaction(
+    mut table_iters: Vec<SSTableIterator>,
+    num_tables: usize,
+) -> (SSTable, PathBuf) {
     let mut writer =
         CompactionWriter::new().expect("Unable to open SSTable file for CompactionWriter");
     let mut heap: BinaryHeap<Reverse<HeapNode>> = BinaryHeap::new();
@@ -202,8 +205,8 @@ pub(crate) fn run_compaction(mut table_iters: Vec<SSTableIterator>, num_tables: 
 mod tests {
     use super::*;
     use crate::memtable::inner::{MemtableInner, NodeData};
-    use crate::sstable::iterator::SSTableIterator;
     use crate::sstable::SSTable;
+    use crate::sstable::iterator::SSTableIterator;
 
     struct TempFile(PathBuf);
     impl Drop for TempFile {
@@ -263,10 +266,8 @@ mod tests {
     #[tokio::test]
     async fn test_newer_table_wins_on_duplicate_key() {
         // index 0 = newer (matches SSTableCache push_front ordering)
-        let (newer, _g0) =
-            make_sstable(&[("k", NodeData::Data(b"new_val".to_vec()))]).await;
-        let (older, _g1) =
-            make_sstable(&[("k", NodeData::Data(b"old_val".to_vec()))]).await;
+        let (newer, _g0) = make_sstable(&[("k", NodeData::Data(b"new_val".to_vec()))]).await;
+        let (older, _g1) = make_sstable(&[("k", NodeData::Data(b"old_val".to_vec()))]).await;
 
         let iters = vec![to_iter(newer).await, to_iter(older).await];
         let (mut compact, compact_path) = run_compaction(iters, 2);
@@ -290,8 +291,7 @@ mod tests {
     async fn test_tombstone_hides_older_data() {
         // Newer table (idx 0) has tombstone, older has data — key must not appear in output.
         let (newer, _g0) = make_sstable(&[("k", NodeData::Tombstone)]).await;
-        let (older, _g1) =
-            make_sstable(&[("k", NodeData::Data(b"stale".to_vec()))]).await;
+        let (older, _g1) = make_sstable(&[("k", NodeData::Data(b"stale".to_vec()))]).await;
 
         let iters = vec![to_iter(newer).await, to_iter(older).await];
         let (mut compact, compact_path) = run_compaction(iters, 2);

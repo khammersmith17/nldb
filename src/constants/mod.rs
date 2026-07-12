@@ -7,12 +7,24 @@ pub const HEADER_SIZE: u64 = 6_u64;
 pub const INSERT_LOG_HEADER: u8 = 0_u8;
 pub const TOMBSTONE_LOG_HEADER: u8 = 1_u8;
 
-// SSTABLE CONFIGS
+// DEFAULT SSTABLE CONFIGS
 pub const DISK_BLOCK_SIZE: u64 = 4_000_u64; // 4 KB
 pub const FOOTER_SIZE: u64 = 24_u64;
-pub const SSTABLE_LIMIT: usize = 10_usize;
+pub const DEFAULT_COMPACTION_RATE: u64 = 10_u64;
+pub const DEFAULT_COMPACTION_QUEUE_SIZE: u64 = 100_u64;
 
 // DEFAULT WAL CONFIGS
 pub const DEFAULT_WAL_BUFFER_SIZE: usize = 64_000_usize; // 64 KB
-pub const DEFAULT_WAL_BUFFER_CAPACITY: usize = 100_000_usize; // 64 KB
+pub const DEFAULT_WAL_BUFFER_CAPACITY: usize = 100_000_usize; // 100 KB
 pub const DEFAULT_WAL_BUFFER_FLUSH_TIME: u128 = 400_u128; // 400 ms
+
+// DEFAULT MEMTABLE CONFIGS
+pub const DEFAULT_MAX_MEMTABLE_NODES: u64 = 4096_u64; // 4k
+pub const DEFAULT_MAX_MEMTABLE_SIZE: u64 = 4_000_000_u64; // 4 MB
+pub const DEFAULT_MEMTABLE_FLUSH_QUEUE: u64 = 100_u64;
+
+// DEFAULT CACHE
+pub const DEFAULT_CACHE_SIZE: u64 = 2048_u64;
+
+// CONFIG FILE PATH
+pub const NLDB_CONFIG_FILE_PATH: &'static str = "nldb_conf.yaml";

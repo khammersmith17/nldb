@@ -112,10 +112,11 @@ recover the memtable state.
 wal.<timestamp_nanos>.log
 ```
 
-The timestamp is nanoseconds since the Unix epoch. At most one WAL file exists at
-any time — when the associated memtable is flushed to an SSTable the WAL file is
-deleted. If a WAL file is present on startup it means the corresponding memtable
-was not yet flushed and must be replayed.
+The timestamp is nanoseconds since the Unix epoch. Multiple WAL files can exist
+simultaneously — one per memtable that has been rotated into the immutable queue
+but not yet flushed to an SSTable. When a memtable is successfully flushed to an
+SSTable its WAL file is deleted. WAL deletion failure is treated as fatal and
+poisons the database.
 
 ### WAL buffering
 
@@ -197,7 +198,7 @@ tree).
 
 | Field   | Size | Description               |
 |---------|------|---------------------------|
-| magic   | 4    | `0x78 0x76 0x68 0x66` ("NLDB") |
+| magic   | 4    | `0x4E 0x4C 0x44 0x42` ("NLDB") |
 | version | 2    | big-endian u16, currently `0` |
 
 ### Data block records
@@ -299,12 +300,14 @@ On startup, `get_restart_state` scans the working directory for:
 
 - `.sstable` files — loaded into the SSTable cache, sorted newest-first by
   timestamp in the filename.
-- A single `wal.<ts>.log` file — replayed into a fresh memtable. The WAL is
-  deleted after successful replay.
-
-The single-WAL-file invariant holds because WAL deletion is treated as a fatal
-error: if deletion fails after an SSTable flush, the database is poisoned to
-prevent the invariant from being violated.
+- `wal.<ts>.log` files — sorted oldest-first by timestamp. The caller handles
+  each category differently:
+  - **All WAL files except the newest** represent full memtables that were
+    rotated but never flushed. Each is replayed and immediately flushed to a
+    new SSTable.
+  - **The newest WAL file** represents the active memtable at shutdown, which
+    may be partially filled. It is replayed into the new active memtable without
+    flushing.
 
 ### Poisoned state
 

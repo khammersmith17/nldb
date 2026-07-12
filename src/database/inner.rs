@@ -6,6 +6,7 @@ use crate::memtable::{
     immutable::ImmutableMemtable,
     inner::{Blob, MemtableFlushSignal, MemtableQuery, NodeData, flush_memtable},
 };
+use crate::restart::{SSTableArtifact, WalArtifact};
 use crate::sstable::SSTableCache;
 use dash_cache::DashCache;
 use std::num::NonZeroUsize;
@@ -27,14 +28,15 @@ pub struct NldbInner {
 }
 
 impl NldbInner {
-    pub fn new(config: &NldbConfig) -> NldbInner {
+    fn new_empty(config: &NldbConfig) -> NldbInner {
         let memtable = Memtable::new(
             config.max_memtable_size as usize,
             config.max_memtable_nodes as usize,
         )
         .expect("Unable to create memtable");
 
-        let cache = DashCache::new(NonZeroUsize::new(config.cache_size as usize).unwrap());
+        let cache: DashCache<String, Blob> =
+            DashCache::new(NonZeroUsize::new(config.cache_size as usize).unwrap());
         let sstable_cache = SSTableCache::new(config.compaction_rate as usize);
         let poisoned = Arc::new(AtomicBool::new(false));
 
@@ -45,7 +47,83 @@ impl NldbInner {
         let (memtable_channel, table_flush_recv) = mpsc::channel(100);
 
         let (sstable_ack_tx, sstable_ack_rx) = mpsc::channel::<SSTableLoadAck>(1);
-        let immutable = ImmutableMemtable::new();
+        let immutable = ImmutableMemtable::new_empty();
+        let _compaction_handle = tokio::task::spawn(sstable_background(
+            receiver,
+            sstable_cache.clone(),
+            immutable.clone(),
+            sstable_ack_tx,
+        ));
+
+        let shared_immutable = immutable.clone();
+        let shared_flag = poisoned.clone();
+        let compaction_signal = signal.clone();
+
+        // Do not save the handle, let Drop take care of clean up.
+        let _ = tokio::task::spawn(flush_memtable(
+            shared_immutable,
+            compaction_signal,
+            shared_flag,
+            table_flush_recv,
+            sstable_ack_rx,
+        ));
+
+        NldbInner {
+            memtable,
+            sstable_cache,
+            cache,
+            poisoned,
+            signal,
+            immutable,
+            memtable_channel,
+        }
+    }
+
+    pub fn new(
+        sstable_files: Vec<SSTableArtifact>,
+        mut wal_files: Vec<WalArtifact>,
+        config: &NldbConfig,
+    ) -> NldbInner {
+        if sstable_files.is_empty() && wal_files.is_empty() {
+            return Self::new_empty(config);
+        }
+
+        let memtable = if let Some(new_wal) = wal_files.pop() {
+            Memtable::new_from_wal(
+                &new_wal.filename,
+                config.max_memtable_size as usize,
+                config.max_memtable_nodes as usize,
+            )
+            .expect("Unable to create memtable from WAL file")
+        } else {
+            Memtable::new(
+                config.max_memtable_size as usize,
+                config.max_memtable_nodes as usize,
+            )
+            .expect("Unable to create memtable")
+        };
+
+        let cache: DashCache<String, Blob> =
+            DashCache::new(NonZeroUsize::new(config.cache_size as usize).unwrap());
+
+        let sstable_cache = if sstable_files.is_empty() {
+            SSTableCache::new(config.compaction_rate as usize)
+        } else {
+            SSTableCache::from_restart(sstable_files, config.compaction_rate as usize)
+        };
+        let poisoned = Arc::new(AtomicBool::new(false));
+
+        // TODO: tune correct boundry on compaction channel size.
+        let (signal, receiver) = mpsc::channel::<CompactionSignal>(100);
+
+        // TODO: tune correct boundry on memtable flush channel size.
+        let (memtable_channel, table_flush_recv) = mpsc::channel::<MemtableFlushSignal>(100);
+
+        let (sstable_ack_tx, sstable_ack_rx) = mpsc::channel::<SSTableLoadAck>(1);
+        let immutable = {
+            let c = memtable_channel.clone();
+            ImmutableMemtable::new(wal_files, &config, c)
+        };
         let _compaction_handle = tokio::task::spawn(sstable_background(
             receiver,
             sstable_cache.clone(),

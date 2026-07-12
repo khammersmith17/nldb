@@ -1,6 +1,7 @@
 pub mod inner;
 use crate::config::NldbConfig;
 use crate::memtable::inner::Blob;
+use crate::restart::{SSTableArtifact, WalArtifact};
 use inner::NldbInner;
 use std::sync::Arc;
 
@@ -10,8 +11,12 @@ pub struct Nldb {
 }
 
 impl Nldb {
-    pub fn new(config: &NldbConfig) -> Nldb {
-        let inner = Arc::new(NldbInner::new(config));
+    pub fn new(
+        sstable_files: Vec<SSTableArtifact>,
+        wal_files: Vec<WalArtifact>,
+        config: &NldbConfig,
+    ) -> Nldb {
+        let inner = Arc::new(NldbInner::new(sstable_files, wal_files, config));
 
         Nldb { inner }
     }
