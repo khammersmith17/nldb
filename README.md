@@ -1,8 +1,8 @@
 This is an implementation (in all reality a rather naive one) of a LSM Tree style database for fun.
 
 Implementation status
-[X] memtable (red black tree)
-[X] write ahead logging 
+[X] memtable (red black tree) \
+[X] write ahead logging \
 [X] sstable serialization with index blocks
 [X] bloom filter on disk and in memory
 [X] SSTable Index data strucutre on disk and in memory
