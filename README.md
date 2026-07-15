@@ -1,6 +1,6 @@
 This is an implementation (in all reality a rather naive one) of a LSM Tree style database for fun.
 
-Implementation status
+Implementation status \
 [X] memtable (red black tree) \
 [X] write ahead logging \
 [X] sstable serialization with index blocks \
