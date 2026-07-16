@@ -1,4 +1,5 @@
 use crate::constants;
+use crate::memtable::inner::Blob;
 use crate::sstable::{bloom_filter::BloomFilter, footer::SSTableFooter};
 use crate::util;
 use std::fs::File;
@@ -6,7 +7,7 @@ use std::io::{Read, Seek, SeekFrom};
 
 #[derive(Debug)]
 pub struct SstIndex {
-    keys: Vec<String>,
+    keys: Vec<Blob>,
     offsets: Vec<u64>,
     bloom_filter: BloomFilter,
     pub data_block_end: u64,
@@ -15,8 +16,8 @@ pub struct SstIndex {
 /// Read the index table in from disk.
 /// The layout for each index entry is:
 ///     [key length (varint)][variable length key][offset (8 Big Endian u64)]
-fn decode_index(buffer: &[u8], index_len: usize) -> (Vec<String>, Vec<u64>) {
-    let mut keys: Vec<String> = Vec::with_capacity(index_len);
+fn decode_index(buffer: &[u8], index_len: usize) -> (Vec<Blob>, Vec<u64>) {
+    let mut keys: Vec<Blob> = Vec::with_capacity(index_len);
     let mut offsets: Vec<u64> = Vec::with_capacity(index_len);
 
     let mut offset = 0_usize;
@@ -25,8 +26,7 @@ fn decode_index(buffer: &[u8], index_len: usize) -> (Vec<String>, Vec<u64>) {
         let (key_len, bytes_walked) = util::decode_varint(buffer, offset);
         offset += bytes_walked;
         let key_buffer = (&buffer[offset..offset + key_len as usize]).to_vec();
-        let key = unsafe { String::from_utf8_unchecked(key_buffer) };
-        keys.push(key);
+        keys.push(key_buffer);
 
         offset += key_len as usize;
 
@@ -65,7 +65,7 @@ impl SstIndex {
 
     /// Returns the start of the index range a key falls into, if the key is in the SSTable file on
     /// disk, otherwise None is returned.
-    pub fn range_search_start(&self, key: &str) -> Option<(u64, u64)> {
+    pub fn range_search_start(&self, key: &[u8]) -> Option<(u64, u64)> {
         if !self.bloom_filter.contains(key) {
             return None;
         }
@@ -82,9 +82,9 @@ impl SstIndex {
         Some(search_offsets)
     }
 
-    fn search_key(&self, key: &str) -> usize {
+    fn search_key(&self, key: &[u8]) -> usize {
         self.keys
-            .partition_point(|edge| key >= edge.as_str())
+            .partition_point(|edge| key >= edge.as_slice())
             .min(self.keys.len())
             .saturating_sub(1_usize)
     }

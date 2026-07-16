@@ -1,8 +1,8 @@
-use crate::memtable::inner::NodeData;
+use crate::memtable::inner::{Blob, NodeData};
 use std::string::FromUtf8Error;
 #[derive(Debug)]
 pub enum MemtableError {
-    TableFull(String, NodeData),
+    TableFull(Blob, NodeData),
 }
 
 #[derive(Debug)]

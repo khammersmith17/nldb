@@ -1,16 +1,16 @@
 use crate::util;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-fn hash1(key: &str) -> u64 {
+fn hash1(key: &[u8]) -> u64 {
     let mut hasher = DefaultHasher::new();
     0_u64.hash(&mut hasher);
-    hasher.write(key.as_bytes());
+    hasher.write(key);
     hasher.finish()
 }
-fn hash2(key: &str) -> u64 {
+fn hash2(key: &[u8]) -> u64 {
     let mut hasher = DefaultHasher::new();
     1_u64.hash(&mut hasher);
-    hasher.write(key.as_bytes());
+    hasher.write(key);
     hasher.finish()
 }
 
@@ -58,7 +58,7 @@ impl BloomFilter {
         }
     }
 
-    pub fn insert(&mut self, key: &str) {
+    pub fn insert(&mut self, key: &[u8]) {
         let h1 = hash1(key);
         let h2 = hash2(key);
 
@@ -70,7 +70,7 @@ impl BloomFilter {
         }
     }
 
-    pub fn contains(&self, key: &str) -> bool {
+    pub fn contains(&self, key: &[u8]) -> bool {
         let h1 = hash1(key);
         let h2 = hash2(key);
 

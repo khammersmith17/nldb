@@ -1,12 +1,12 @@
 use crate::constants;
 use crate::disk::encode;
-use crate::memtable::inner::MemtableInner;
+use crate::memtable::inner::{Blob, MemtableInner};
 use crate::sstable::bloom_filter::BloomFilter;
 use crate::util;
 use std::fs::File;
 use std::io::Write;
 
-pub fn encode_index_block(index_block: Vec<(String, u64)>) -> Vec<u8> {
+pub fn encode_index_block(index_block: Vec<(Blob, u64)>) -> Vec<u8> {
     let buffer_size: usize = index_block.iter().map(|(key, _)| key.len() + 8 + 2).sum();
     let mut buffer = vec![0_u8; buffer_size];
     let mut offset = 0_usize;
@@ -16,7 +16,7 @@ pub fn encode_index_block(index_block: Vec<(String, u64)>) -> Vec<u8> {
 
         buffer[offset..offset + varint_len].copy_from_slice(&key_len_varint[..varint_len]);
         offset += varint_len;
-        buffer[offset..offset + key.len()].copy_from_slice(&key.as_bytes());
+        buffer[offset..offset + key.len()].copy_from_slice(&key);
         offset += key.len();
         buffer[offset..offset + 8].copy_from_slice(&key_offset.to_be_bytes());
         offset += 8;
@@ -42,7 +42,7 @@ pub fn write_sstable(table: &MemtableInner, fd: &mut File) -> std::io::Result<()
      * DFS inorder to insert records in sorted order
      * */
     let mut disk_size = 6_u64;
-    let mut index_block: Vec<(String, u64)> =
+    let mut index_block: Vec<(Blob, u64)> =
         Vec::with_capacity(table.current_size / constants::DISK_BLOCK_SIZE as usize);
     let mut bloom_filter = BloomFilter::new(table.arena.len());
     fd.write(&constants::NLDB_SSTABLE_HEADER)?;
@@ -79,7 +79,7 @@ fn inorder_flush(
     fd: &mut File,
     node_idx_opt: Option<usize>,
     disk_size: &mut u64,
-    index_block: &mut Vec<(String, u64)>,
+    index_block: &mut Vec<(Blob, u64)>,
     bloom_filter: &mut BloomFilter,
 ) -> std::io::Result<()> {
     let Some(node_idx) = node_idx_opt else {
@@ -100,7 +100,7 @@ fn inorder_flush(
         let before = *disk_size % constants::DISK_BLOCK_SIZE;
         let record_offset = *disk_size;
         let disk_record = encode::encode_memtable_node(current_node);
-        bloom_filter.insert(current_node.key.as_str());
+        bloom_filter.insert(&current_node.key);
         *disk_size += disk_record.len() as u64;
         let after = *disk_size % constants::DISK_BLOCK_SIZE;
 

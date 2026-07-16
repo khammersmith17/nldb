@@ -5,6 +5,8 @@ use crate::restart::{SSTableArtifact, WalArtifact};
 use inner::NldbInner;
 use std::sync::Arc;
 
+/// Database wrapper. Only exposes the three supported statements, GET, INSERT (write), and DELETE.
+/// TODO: add auth public api.
 #[derive(Clone, Debug)]
 pub struct Nldb {
     inner: Arc<NldbInner>,
@@ -21,15 +23,15 @@ impl Nldb {
         Nldb { inner }
     }
 
-    pub async fn write(&self, key: String, value: Blob) {
+    pub async fn write(&self, key: Blob, value: Blob) {
         self.inner.write(key, value).await
     }
 
-    pub async fn get(&self, key: String) -> Option<Blob> {
+    pub async fn get(&self, key: Blob) -> Option<Blob> {
         self.inner.get(key).await
     }
 
-    pub async fn delete(&self, key: String) {
+    pub async fn delete(&self, key: Blob) {
         self.inner.delete(key).await
     }
 }

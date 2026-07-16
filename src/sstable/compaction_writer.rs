@@ -1,5 +1,6 @@
 use crate::constants;
 use crate::disk::{DiskRecord, encode};
+use crate::memtable::inner::Blob;
 use crate::sstable::{
     bloom_filter::BloomFilter,
     encode::{encode_footer, encode_index_block},
@@ -9,7 +10,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
-fn key_from_record_buffer(buffer: &[u8]) -> String {
+fn key_from_record_buffer(buffer: &[u8]) -> Blob {
     // Get log size.
     let (_, bytes_walked) = util::decode_varint(buffer, 1_usize);
     // Walk past log size varint.
@@ -22,13 +23,13 @@ fn key_from_record_buffer(buffer: &[u8]) -> String {
     let key_end = key_start + key_len as usize;
 
     // Parse string.
-    unsafe { String::from_utf8_unchecked(buffer[key_start..key_end].to_vec()) }
+    buffer[key_start..key_end].to_vec()
 }
 
 pub struct CompactionWriter {
     fd: File,
     filename: PathBuf,
-    index: Vec<(String, u64)>,
+    index: Vec<(Blob, u64)>,
     disk_offset: u64,
     write_buffer: Vec<u8>,
     bloom_filter: BloomFilter,
@@ -59,7 +60,7 @@ impl CompactionWriter {
     /// Push a data record into the SSTable file.
     /// Expects a data record, not a tombstone record.
     pub fn push(&mut self, record: DiskRecord) -> std::io::Result<()> {
-        self.bloom_filter.insert(record.key.as_str());
+        self.bloom_filter.insert(&record.key);
         let encoded_record = encode::merge_encode_record(record);
         let record_size = encoded_record.len();
 

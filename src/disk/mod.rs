@@ -22,7 +22,7 @@ fn is_tombstone(header: u8) -> bool {
 }
 
 pub struct DiskRecord {
-    pub key: String,
+    pub key: Blob,
     pub data: NodeData,
 }
 
@@ -51,7 +51,7 @@ pub fn search_data_block(
     fd: &mut File,
     block_start: u64,
     block_end: u64,
-    search_key: &str,
+    search_key: &[u8],
 ) -> Result<Blob, SSTableError> {
     let block_size = (block_end - block_start) as usize;
     fd.seek(SeekFrom::Start(block_start))?;
@@ -72,7 +72,7 @@ pub fn search_data_block(
         offset += bytes_walked;
 
         let key = &block_buffer[offset..offset + key_size as usize];
-        if !key.eq(search_key.as_bytes()) {
+        if !key.eq(search_key) {
             offset = log_end;
             continue;
         }
@@ -97,19 +97,19 @@ mod tests {
     use crate::memtable::inner::NodeData;
     use crate::util;
 
-    fn make_insert_record(key: &str, data: &[u8]) -> Vec<u8> {
+    fn make_insert_record(key: &[u8], data: &[u8]) -> Vec<u8> {
         let (key_varint, varint_len) = util::encode_varint(key.len());
         encode_insert_record(key, &key_varint[..varint_len], data)
     }
 
-    fn make_tombstone_record(key: &str) -> Vec<u8> {
+    fn make_tombstone_record(key: &[u8]) -> Vec<u8> {
         let (key_varint, varint_len) = util::encode_varint(key.len());
         encode_tombstone_record(key, &key_varint[..varint_len])
     }
 
     #[test]
     fn insert_record_roundtrip() {
-        let key = "hello";
+        let key = b"hello";
         let data = b"world";
         let buf = make_insert_record(key, data);
 
@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn tombstone_record_roundtrip() {
-        let key = "deleted_key";
+        let key = b"deleted_key";
         let buf = make_tombstone_record(key);
 
         let mut offset = 0;
@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn insert_record_empty_data() {
-        let key = "emptyval";
+        let key = b"emptyval";
         let buf = make_insert_record(key, b"");
 
         let mut offset = 0;
@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn insert_record_large_key_and_data() {
-        let key = "k".repeat(200);
+        let key = b"k".repeat(200);
         let data = vec![0xAB_u8; 500];
         let buf = make_insert_record(&key, &data);
 
@@ -162,9 +162,9 @@ mod tests {
 
     #[test]
     fn multiple_records_sequential_decode() {
-        let buf1 = make_insert_record("alpha", b"1");
-        let buf2 = make_tombstone_record("beta");
-        let buf3 = make_insert_record("gamma", b"3");
+        let buf1 = make_insert_record(b"alpha", b"1");
+        let buf2 = make_tombstone_record(b"beta");
+        let buf3 = make_insert_record(b"gamma", b"3");
 
         let mut combined = Vec::new();
         combined.extend_from_slice(&buf1);
@@ -176,11 +176,11 @@ mod tests {
         let r2 = decode_disk_record(&combined, &mut offset).unwrap();
         let r3 = decode_disk_record(&combined, &mut offset).unwrap();
 
-        assert_eq!(r1.key, "alpha");
+        assert_eq!(r1.key, b"alpha");
         assert!(matches!(r1.data, NodeData::Data(ref d) if d == b"1"));
-        assert_eq!(r2.key, "beta");
+        assert_eq!(r2.key, b"beta");
         assert!(matches!(r2.data, NodeData::Tombstone));
-        assert_eq!(r3.key, "gamma");
+        assert_eq!(r3.key, b"gamma");
         assert!(matches!(r3.data, NodeData::Data(ref d) if d == b"3"));
         assert_eq!(offset, combined.len());
     }

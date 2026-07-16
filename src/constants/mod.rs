@@ -28,3 +28,9 @@ pub const DEFAULT_CACHE_SIZE: u64 = 2048_u64;
 
 // CONFIG FILE PATH
 pub const NLDB_CONFIG_FILE_PATH: &'static str = "nldb_conf.yaml";
+
+// TCP ADDRESS
+pub const TCP_ADDRESS: &'static str = "127.0.0.1:7211";
+
+// DATA CONSTRAINTS
+pub const MAX_MESSAGE_SIZE: usize = (2 << 19) * 10;

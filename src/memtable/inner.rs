@@ -200,7 +200,7 @@ impl NodeData {
 
 #[derive(Debug, Eq)]
 pub struct MemtableNode {
-    pub key: String,
+    pub key: Blob,
     pub data: NodeData,
     pub left: Option<usize>,
     pub right: Option<usize>,
@@ -245,7 +245,7 @@ impl MemtableNode {
         self.data = node.data;
     }
 
-    fn new(key: String, data: NodeData) -> MemtableNode {
+    fn new(key: Blob, data: NodeData) -> MemtableNode {
         MemtableNode {
             key,
             data,
@@ -310,7 +310,7 @@ impl MemtableInner {
     // If full -> flush.
     // Return the write request back out to the caller. The caller rotates the table, and then
     // calls again. The next write will then succeed.
-    pub fn insert(&mut self, key: String, value: NodeData) -> Result<(), MemtableError> {
+    pub fn insert(&mut self, key: Blob, value: NodeData) -> Result<(), MemtableError> {
         if self.full() {
             return Err(MemtableError::TableFull(key, value));
         }
@@ -521,7 +521,7 @@ impl MemtableInner {
     }
 
     // Always returned owned copy of the data segment.
-    pub fn get(&self, key: &str) -> MemtableQuery {
+    pub fn get(&self, key: &[u8]) -> MemtableQuery {
         let Some(node_idx) = self.get_search(key) else {
             return MemtableQuery::None;
         };
@@ -532,7 +532,7 @@ impl MemtableInner {
         }
     }
 
-    fn get_search(&self, key: &str) -> Option<usize> {
+    fn get_search(&self, key: &[u8]) -> Option<usize> {
         let mut curr = self.root_node?;
 
         loop {
@@ -560,7 +560,7 @@ impl MemtableInner {
 
 #[cfg(test)]
 impl MemtableNode {
-    pub fn new_for_test(key: String, data: NodeData) -> MemtableNode {
+    pub fn new_for_test(key: Blob, data: NodeData) -> MemtableNode {
         MemtableNode::new(key, data)
     }
 }
@@ -666,7 +666,7 @@ mod tests {
     #[test]
     fn test_root_is_black() {
         let mut t = make_memtable();
-        t.insert("m".to_string(), NodeData::Data(b"v".to_vec()))
+        t.insert(b"m".to_vec(), NodeData::Data(b"v".to_vec()))
             .unwrap();
         assert_eq!(t.arena[t.root_node.unwrap()].color, Color::Black);
     }
@@ -674,20 +674,20 @@ mod tests {
     #[test]
     fn test_get_after_insert() {
         let mut t = make_memtable();
-        t.insert("hello".to_string(), NodeData::Data(b"world".to_vec()))
+        t.insert(b"hello".to_vec(), NodeData::Data(b"world".to_vec()))
             .unwrap();
-        assert_eq!(t.get("hello"), MemtableQuery::Data(b"world".to_vec()));
-        assert_eq!(t.get("missing"), MemtableQuery::None);
+        assert_eq!(t.get(b"hello"), MemtableQuery::Data(b"world".to_vec()));
+        assert_eq!(t.get(b"missing"), MemtableQuery::None);
     }
 
     #[test]
     fn test_duplicate_key_updates_value() {
         let mut t = make_memtable();
-        t.insert("key".to_string(), NodeData::Data(b"v1".to_vec()))
+        t.insert(b"key".to_vec(), NodeData::Data(b"v1".to_vec()))
             .unwrap();
-        t.insert("key".to_string(), NodeData::Data(b"v2".to_vec()))
+        t.insert(b"key".to_vec(), NodeData::Data(b"v2".to_vec()))
             .unwrap();
-        assert_eq!(t.get("key"), MemtableQuery::Data(b"v2".to_vec()));
+        assert_eq!(t.get(b"key"), MemtableQuery::Data(b"v2".to_vec()));
     }
 
     #[test]
@@ -695,9 +695,8 @@ mod tests {
         // m(B) → e(R) left, t(R) right, then a(R) left of e
         // parent e is red, uncle t is red → Case 1: recolor e,t black, m red → m forced black
         let mut t = make_memtable();
-        for k in ["m", "e", "t", "a"] {
-            t.insert(k.to_string(), NodeData::Data(b"".to_vec()))
-                .unwrap();
+        for k in [b"m", b"e", b"t", b"a"] {
+            t.insert(k.to_vec(), NodeData::Data(b"".to_vec())).unwrap();
         }
         check_invariants(&t);
         let root = t.root_node.unwrap();
@@ -711,13 +710,12 @@ mod tests {
     fn test_case3_right_right() {
         // a → b → c: right-right straight line → left rotate a, b becomes root
         let mut t = make_memtable();
-        for k in ["a", "b", "c"] {
-            t.insert(k.to_string(), NodeData::Data(b"".to_vec()))
-                .unwrap();
+        for k in [b"a", b"b", b"c"] {
+            t.insert(k.to_vec(), NodeData::Data(b"".to_vec())).unwrap();
         }
         check_invariants(&t);
         let root = t.root_node.unwrap();
-        assert_eq!(t.arena[root].key, "b");
+        assert_eq!(t.arena[root].key, b"b");
         assert_eq!(t.arena[root].color, Color::Black);
     }
 
@@ -725,13 +723,12 @@ mod tests {
     fn test_case3_left_left() {
         // c → b → a: left-left straight line → right rotate c, b becomes root
         let mut t = make_memtable();
-        for k in ["c", "b", "a"] {
-            t.insert(k.to_string(), NodeData::Data(b"".to_vec()))
-                .unwrap();
+        for k in [b"c", b"b", b"a"] {
+            t.insert(k.to_vec(), NodeData::Data(b"".to_vec())).unwrap();
         }
         check_invariants(&t);
         let root = t.root_node.unwrap();
-        assert_eq!(t.arena[root].key, "b");
+        assert_eq!(t.arena[root].key, b"b");
         assert_eq!(t.arena[root].color, Color::Black);
     }
 
@@ -739,13 +736,12 @@ mod tests {
     fn test_case2_case3_right_left() {
         // a → c → b: right-left zigzag → Case 2 (right rotate c) then Case 3, b becomes root
         let mut t = make_memtable();
-        for k in ["a", "c", "b"] {
-            t.insert(k.to_string(), NodeData::Data(b"".to_vec()))
-                .unwrap();
+        for k in [b"a", b"c", b"b"] {
+            t.insert(k.to_vec(), NodeData::Data(b"".to_vec())).unwrap();
         }
         check_invariants(&t);
         let root = t.root_node.unwrap();
-        assert_eq!(t.arena[root].key, "b");
+        assert_eq!(t.arena[root].key, b"b");
         assert_eq!(t.arena[root].color, Color::Black);
     }
 
@@ -753,22 +749,20 @@ mod tests {
     fn test_case2_case3_left_right() {
         // c → a → b: left-right zigzag → Case 2 (left rotate a) then Case 3, b becomes root
         let mut t = make_memtable();
-        for k in ["c", "a", "b"] {
-            t.insert(k.to_string(), NodeData::Data(b"".to_vec()))
-                .unwrap();
+        for k in [b"c", b"a", b"b"] {
+            t.insert(k.to_vec(), NodeData::Data(b"".to_vec())).unwrap();
         }
         check_invariants(&t);
         let root = t.root_node.unwrap();
-        assert_eq!(t.arena[root].key, "b");
+        assert_eq!(t.arena[root].key, b"b");
         assert_eq!(t.arena[root].color, Color::Black);
     }
 
     #[test]
     fn test_invariants_many_inserts() {
         let mut t = make_memtable();
-        for k in ["f", "b", "g", "a", "d", "i", "c", "e", "h"] {
-            t.insert(k.to_string(), NodeData::Data(b"".to_vec()))
-                .unwrap();
+        for k in [b"f", b"b", b"g", b"a", b"d", b"i", b"c", b"e", b"h"] {
+            t.insert(k.to_vec(), NodeData::Data(b"".to_vec())).unwrap();
             check_invariants(&t);
         }
     }
@@ -776,19 +770,17 @@ mod tests {
     #[test]
     fn test_all_keys_retrievable() {
         let mut t = make_memtable();
-        let keys = ["f", "b", "g", "a", "d", "i", "c", "e", "h"];
+        let keys = [b"f", b"b", b"g", b"a", b"d", b"i", b"c", b"e", b"h"];
         for k in keys {
-            t.insert(
-                k.to_string(),
-                NodeData::Data(vec![*k.as_bytes().first().unwrap()]),
-            )
-            .unwrap();
+            t.insert(k.to_vec(), NodeData::Data(vec![*k.first().unwrap()]))
+                .unwrap();
         }
         for k in keys {
             assert_eq!(
                 t.get(k),
-                MemtableQuery::Data(vec![*k.as_bytes().first().unwrap()]),
-                "Missing key {k}"
+                MemtableQuery::Data(vec![*k.first().unwrap()]),
+                "Missing key {:?}",
+                k
             );
         }
     }

@@ -3,11 +3,17 @@ use crate::memtable::inner::Blob;
 use crate::util;
 
 /*
+* All incoming statements will have a 4 byte Big Endian encoded size.
 * Statements are intentionally simple.
 *
-* GET <key len varint><key>
-* INSERT <key len varint><key><value len varint><value>
-* DELETE <key len varint><key>
+* 4 byte length header does not include the size. The parser here expects the 4 byte header not to
+*   be present. The 4 byte header should not be included in the buffer when reading from the TCP
+*   Stream.
+*
+* [4 bytes]GET <key len varint><key>
+* [4 bytes]INSERT <key len varint><key><value len varint><value>
+* [4 bytes]DELETE <key len varint><key>
+* TODO: AUTH <username len varint><username><password len varint><password>
 * */
 
 // Normalize all statements to all upper case.
@@ -26,7 +32,7 @@ fn parse_to_space(buffer: &[u8], offset: &mut usize) {
     }
 }
 
-fn parse_key(buffer: &[u8], offset: usize) -> Result<(String, usize), NldbError> {
+fn parse_key(buffer: &[u8], offset: usize) -> Result<(Blob, usize), NldbError> {
     let (key_len, bytes_walked) = util::decode_untrusted_varint(&buffer, offset)?;
     let key_start = offset + bytes_walked;
     let key_end = key_start + key_len as usize;
@@ -40,7 +46,7 @@ fn parse_key(buffer: &[u8], offset: usize) -> Result<(String, usize), NldbError>
         return Err(NldbError::InvalidQuery);
     }
 
-    let key = String::from_utf8(buffer[key_start..key_end].to_vec())?;
+    let key = buffer[key_start..key_end].to_vec();
     Ok((key, key_end))
 }
 
@@ -63,9 +69,9 @@ impl RequestType {
 }
 
 pub enum NldbRequest {
-    Get { key: String },
-    Delete { key: String },
-    Insert { key: String, value: Blob },
+    Get { key: Blob },
+    Delete { key: Blob },
+    Insert { key: Blob, value: Blob },
 }
 
 impl NldbRequest {
@@ -167,8 +173,10 @@ mod tests {
     #[test]
     fn test_get_simple() {
         let req = parse(&make_get(b"foo")).unwrap();
-        let NldbRequest::Get { key } = req else { panic!("wrong variant") };
-        assert_eq!(key, "foo");
+        let NldbRequest::Get { key } = req else {
+            panic!("wrong variant")
+        };
+        assert_eq!(key, b"foo");
     }
 
     #[test]
@@ -183,15 +191,19 @@ mod tests {
     #[test]
     fn test_get_key_with_spaces() {
         let req = parse(&make_get(b"hello world")).unwrap();
-        let NldbRequest::Get { key } = req else { panic!() };
-        assert_eq!(key, "hello world");
+        let NldbRequest::Get { key } = req else {
+            panic!()
+        };
+        assert_eq!(key, b"hello world");
     }
 
     #[test]
     fn test_get_multibyte_key_varint() {
         let key = vec![b'k'; 200];
         let req = parse(&make_get(&key)).unwrap();
-        let NldbRequest::Get { key: parsed_key } = req else { panic!() };
+        let NldbRequest::Get { key: parsed_key } = req else {
+            panic!()
+        };
         assert_eq!(parsed_key.len(), 200);
     }
 
@@ -200,8 +212,10 @@ mod tests {
     #[test]
     fn test_delete_simple() {
         let req = parse(&make_delete(b"bar")).unwrap();
-        let NldbRequest::Delete { key } = req else { panic!() };
-        assert_eq!(key, "bar");
+        let NldbRequest::Delete { key } = req else {
+            panic!()
+        };
+        assert_eq!(key, b"bar");
     }
 
     // --- INSERT ---
@@ -209,15 +223,19 @@ mod tests {
     #[test]
     fn test_insert_simple() {
         let req = parse(&make_insert(b"mykey", b"myvalue")).unwrap();
-        let NldbRequest::Insert { key, value } = req else { panic!() };
-        assert_eq!(key, "mykey");
+        let NldbRequest::Insert { key, value } = req else {
+            panic!()
+        };
+        assert_eq!(key, b"mykey");
         assert_eq!(value, b"myvalue");
     }
 
     #[test]
     fn test_insert_value_with_spaces() {
         let req = parse(&make_insert(b"k", b"hello world")).unwrap();
-        let NldbRequest::Insert { value, .. } = req else { panic!() };
+        let NldbRequest::Insert { value, .. } = req else {
+            panic!()
+        };
         assert_eq!(value, b"hello world");
     }
 
@@ -225,7 +243,9 @@ mod tests {
     fn test_insert_binary_value() {
         let value = vec![0u8, 1, 2, 255, 128];
         let req = parse(&make_insert(b"k", &value)).unwrap();
-        let NldbRequest::Insert { value: parsed, .. } = req else { panic!() };
+        let NldbRequest::Insert { value: parsed, .. } = req else {
+            panic!()
+        };
         assert_eq!(parsed, value);
     }
 
@@ -268,14 +288,6 @@ mod tests {
         buf.extend_from_slice(b"key");
         buf.extend(encode_varint(100));
         buf.extend_from_slice(b"tiny");
-        assert!(parse(&buf).is_err());
-    }
-
-    #[test]
-    fn test_invalid_utf8_key_errors() {
-        let mut buf = b"GET ".to_vec();
-        buf.extend(encode_varint(2));
-        buf.extend_from_slice(&[0xFF, 0xFE]);
         assert!(parse(&buf).is_err());
     }
 }

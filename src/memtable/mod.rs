@@ -38,19 +38,19 @@ impl Memtable {
         })
     }
 
-    pub async fn insert(&self, key: String, data: Blob) -> Result<(), MemtableError> {
+    pub async fn insert(&self, key: Blob, data: Blob) -> Result<(), MemtableError> {
         let node_data = NodeData::Data(data);
         let mut handle = self.inner.write().await;
         handle.insert(key, node_data)?;
         Ok(())
     }
 
-    pub async fn get(&self, key: &str) -> MemtableQuery {
+    pub async fn get(&self, key: &[u8]) -> MemtableQuery {
         let handle = self.inner.read().await;
         handle.get(key)
     }
 
-    pub async fn delete(&self, key: String) -> Result<(), MemtableError> {
+    pub async fn delete(&self, key: Blob) -> Result<(), MemtableError> {
         let tombstone = NodeData::Tombstone;
         let mut handle = self.inner.write().await;
         handle.insert(key, tombstone)
@@ -113,61 +113,61 @@ mod tests {
     #[tokio::test]
     async fn test_insert_and_get() {
         let (m, _g) = make_memtable();
-        m.insert("foo".to_string(), b"bar".to_vec()).await.unwrap();
-        assert_eq!(m.get("foo").await, MemtableQuery::Data(b"bar".to_vec()));
+        m.insert(b"foo".to_vec(), b"bar".to_vec()).await.unwrap();
+        assert_eq!(m.get(b"foo").await, MemtableQuery::Data(b"bar".to_vec()));
     }
 
     #[tokio::test]
     async fn test_get_missing_returns_none() {
         let (m, _g) = make_memtable();
-        assert_eq!(m.get("missing").await, MemtableQuery::None);
+        assert_eq!(m.get(b"missing").await, MemtableQuery::None);
     }
 
     #[tokio::test]
     async fn test_insert_overwrites_existing() {
         let (m, _g) = make_memtable();
-        m.insert("k".to_string(), b"v1".to_vec()).await.unwrap();
-        m.insert("k".to_string(), b"v2".to_vec()).await.unwrap();
-        assert_eq!(m.get("k").await, MemtableQuery::Data(b"v2".to_vec()));
+        m.insert(b"k".to_vec(), b"v1".to_vec()).await.unwrap();
+        m.insert(b"k".to_vec(), b"v2".to_vec()).await.unwrap();
+        assert_eq!(m.get(b"k").await, MemtableQuery::Data(b"v2".to_vec()));
     }
 
     #[tokio::test]
     async fn test_delete_writes_tombstone() {
         let (m, _g) = make_memtable();
-        m.insert("k".to_string(), b"v".to_vec()).await.unwrap();
-        m.delete("k".to_string()).await.unwrap();
-        assert_eq!(m.get("k").await, MemtableQuery::Tombstone);
+        m.insert(b"k".to_vec(), b"v".to_vec()).await.unwrap();
+        m.delete(b"k".to_vec()).await.unwrap();
+        assert_eq!(m.get(b"k").await, MemtableQuery::Tombstone);
     }
 
     #[tokio::test]
     async fn test_delete_nonexistent_key_writes_tombstone() {
         let (m, _g) = make_memtable();
-        m.delete("ghost".to_string()).await.unwrap();
-        assert_eq!(m.get("ghost").await, MemtableQuery::Tombstone);
+        m.delete(b"ghost".to_vec()).await.unwrap();
+        assert_eq!(m.get(b"ghost").await, MemtableQuery::Tombstone);
     }
 
     #[tokio::test]
     async fn test_rotate_returns_old_table() {
         let (m, _g) = make_memtable();
-        m.insert("a".to_string(), b"1".to_vec()).await.unwrap();
-        m.insert("b".to_string(), b"2".to_vec()).await.unwrap();
+        m.insert(b"a".to_vec(), b"1".to_vec()).await.unwrap();
+        m.insert(b"b".to_vec(), b"2".to_vec()).await.unwrap();
 
         let old = m.rotate().await.unwrap();
         // rotate() installed a fresh MemtableInner with a new WAL; clean it up.
         let fresh_wal = m.wal_path_for_test().await;
-        assert_eq!(old.get("a"), MemtableQuery::Data(b"1".to_vec()));
-        assert_eq!(old.get("b"), MemtableQuery::Data(b"2".to_vec()));
+        assert_eq!(old.get(b"a"), MemtableQuery::Data(b"1".to_vec()));
+        assert_eq!(old.get(b"b"), MemtableQuery::Data(b"2".to_vec()));
         let _ = fs::remove_file(&fresh_wal);
     }
 
     #[tokio::test]
     async fn test_rotate_fresh_table_is_empty() {
         let (m, _g) = make_memtable();
-        m.insert("a".to_string(), b"1".to_vec()).await.unwrap();
+        m.insert(b"a".to_vec(), b"1".to_vec()).await.unwrap();
         m.rotate().await.unwrap();
         // rotate() installed a fresh MemtableInner with a new WAL; clean it up.
         let fresh_wal = m.wal_path_for_test().await;
-        assert_eq!(m.get("a").await, MemtableQuery::None);
+        assert_eq!(m.get(b"a").await, MemtableQuery::None);
         let _ = fs::remove_file(&fresh_wal);
     }
 
@@ -192,10 +192,10 @@ mod tests {
             max_size: usize::MAX,
             max_nodes: 2,
         };
-        m.insert("a".to_string(), b"".to_vec()).await.unwrap();
-        m.insert("b".to_string(), b"".to_vec()).await.unwrap();
+        m.insert(b"a".to_vec(), b"".to_vec()).await.unwrap();
+        m.insert(b"b".to_vec(), b"".to_vec()).await.unwrap();
         assert!(matches!(
-            m.insert("c".to_string(), b"".to_vec()).await,
+            m.insert(b"c".to_vec(), b"".to_vec()).await,
             Err(MemtableError::TableFull(..))
         ));
     }
@@ -213,11 +213,11 @@ mod tests {
             let fd = fs::File::create(&wal_path).unwrap();
             let mut wal = Wal::from_fd_and_path(fd, wal_path.clone());
             wal.write_log(&MemtableNode::new_for_test(
-                "hello".to_string(),
+                b"hello".to_vec(),
                 NodeData::Data(b"world".to_vec()),
             ));
             wal.write_log(&MemtableNode::new_for_test(
-                "foo".to_string(),
+                b"foo".to_vec(),
                 NodeData::Data(b"bar".to_vec()),
             ));
             wal.flush_for_test();
@@ -227,9 +227,12 @@ mod tests {
         // Original WAL deleted by new_from_wal; clean up the new WAL created internally.
         assert!(!wal_path.exists());
         let new_wal = m.wal_path_for_test().await;
-        assert_eq!(m.get("hello").await, MemtableQuery::Data(b"world".to_vec()));
-        assert_eq!(m.get("foo").await, MemtableQuery::Data(b"bar".to_vec()));
-        assert_eq!(m.get("missing").await, MemtableQuery::None);
+        assert_eq!(
+            m.get(b"hello").await,
+            MemtableQuery::Data(b"world".to_vec())
+        );
+        assert_eq!(m.get(b"foo").await, MemtableQuery::Data(b"bar".to_vec()));
+        assert_eq!(m.get(b"missing").await, MemtableQuery::None);
         let _ = fs::remove_file(&new_wal);
     }
 }

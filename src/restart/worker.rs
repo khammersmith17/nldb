@@ -64,7 +64,7 @@ mod tests {
     // Creates a WAL file with the given records. The ts value is embedded in the
     // filename so WalArtifact::new can parse it. Returns the artifact and a guard
     // that cleans up the file if the test panics before from_wal deletes it.
-    fn make_wal(ts: u128, records: &[(&str, &[u8])]) -> (WalArtifact, WalGuard) {
+    fn make_wal(ts: u128, records: &[(&[u8], &[u8])]) -> (WalArtifact, WalGuard) {
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
         let thread_id = std::thread::current().id();
         // Format: "test_rworker_{thread_id}_{id}_wal.{ts}.log"
@@ -74,7 +74,7 @@ mod tests {
         let fd = fs::File::create(&path).unwrap();
         let mut wal = Wal::from_fd_and_path(fd, path.clone());
         for (key, value) in records {
-            let node = MemtableNode::new_for_test(key.to_string(), NodeData::Data(value.to_vec()));
+            let node = MemtableNode::new_for_test(key.to_vec(), NodeData::Data(value.to_vec()));
             wal.write_log(&node);
         }
         wal.flush_for_test();
@@ -85,14 +85,14 @@ mod tests {
 
     #[test]
     fn test_single_wal_data_recovered() {
-        let (artifact, guard) = make_wal(1000, &[("foo", b"bar"), ("baz", b"qux")]);
+        let (artifact, guard) = make_wal(1000, &[(b"foo", b"bar"), (b"baz", b"qux")]);
         let path = artifact.filename.clone();
 
         let result = read_immutable_tables(&[artifact], &config());
 
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].get("foo"), MemtableQuery::Data(b"bar".to_vec()));
-        assert_eq!(result[0].get("baz"), MemtableQuery::Data(b"qux".to_vec()));
+        assert_eq!(result[0].get(b"foo"), MemtableQuery::Data(b"bar".to_vec()));
+        assert_eq!(result[0].get(b"baz"), MemtableQuery::Data(b"qux".to_vec()));
         assert!(!path.exists());
         for table in result {
             let _ = fs::remove_file(&table.wal.filename);
@@ -108,7 +108,7 @@ mod tests {
         let result = read_immutable_tables(&[artifact], &config());
 
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].get("anything"), MemtableQuery::None);
+        assert_eq!(result[0].get(b"anything"), MemtableQuery::None);
         assert!(!path.exists());
         for table in result {
             let _ = fs::remove_file(&table.wal.filename);
@@ -118,9 +118,9 @@ mod tests {
 
     #[test]
     fn test_multiple_wals_all_loaded() {
-        let (a1, g1) = make_wal(1000, &[("k1", b"v1")]);
-        let (a2, g2) = make_wal(2000, &[("k2", b"v2")]);
-        let (a3, g3) = make_wal(3000, &[("k3", b"v3")]);
+        let (a1, g1) = make_wal(1000, &[(b"k1", b"v1")]);
+        let (a2, g2) = make_wal(2000, &[(b"k2", b"v2")]);
+        let (a3, g3) = make_wal(3000, &[(b"k3", b"v3")]);
         let p1 = a1.filename.clone();
         let p2 = a2.filename.clone();
         let p3 = a3.filename.clone();
@@ -140,23 +140,23 @@ mod tests {
     #[test]
     fn test_order_preserved() {
         // WALs passed in oldest-first; result VecDeque must preserve that order.
-        let (a1, g1) = make_wal(1000, &[("only_in_first", b"yes")]);
-        let (a2, g2) = make_wal(2000, &[("only_in_second", b"yes")]);
+        let (a1, g1) = make_wal(1000, &[(b"only_in_first", b"yes")]);
+        let (a2, g2) = make_wal(2000, &[(b"only_in_second", b"yes")]);
 
         let result = read_immutable_tables(&[a1, a2], &config());
 
         assert_eq!(result.len(), 2);
         // Index 0 = oldest, index 1 = newest.
         assert_eq!(
-            result[0].get("only_in_first"),
+            result[0].get(b"only_in_first"),
             MemtableQuery::Data(b"yes".to_vec())
         );
-        assert_eq!(result[0].get("only_in_second"), MemtableQuery::None);
+        assert_eq!(result[0].get(b"only_in_second"), MemtableQuery::None);
         assert_eq!(
-            result[1].get("only_in_second"),
+            result[1].get(b"only_in_second"),
             MemtableQuery::Data(b"yes".to_vec())
         );
-        assert_eq!(result[1].get("only_in_first"), MemtableQuery::None);
+        assert_eq!(result[1].get(b"only_in_first"), MemtableQuery::None);
         for table in result {
             let _ = fs::remove_file(&table.wal.filename);
         }
@@ -166,13 +166,13 @@ mod tests {
     #[test]
     fn test_tables_are_independent() {
         // Each WAL is a separate memtable; overlapping keys are not merged.
-        let (a1, g1) = make_wal(1000, &[("k", b"old")]);
-        let (a2, g2) = make_wal(2000, &[("k", b"new")]);
+        let (a1, g1) = make_wal(1000, &[(b"k", b"old")]);
+        let (a2, g2) = make_wal(2000, &[(b"k", b"new")]);
 
         let result = read_immutable_tables(&[a1, a2], &config());
 
-        assert_eq!(result[0].get("k"), MemtableQuery::Data(b"old".to_vec()));
-        assert_eq!(result[1].get("k"), MemtableQuery::Data(b"new".to_vec()));
+        assert_eq!(result[0].get(b"k"), MemtableQuery::Data(b"old".to_vec()));
+        assert_eq!(result[1].get(b"k"), MemtableQuery::Data(b"new".to_vec()));
         for table in result {
             let _ = fs::remove_file(&table.wal.filename);
         }

@@ -110,7 +110,6 @@ impl WalIterator {
 
 impl Iterator for WalIterator {
     type Item = DiskRecord;
-
     fn next(&mut self) -> Option<Self::Item> {
         if self.offset >= self.buffer.len() {
             return None;
@@ -145,35 +144,35 @@ mod tests {
         (Wal::from_fd_and_path(fd, path.clone()), WalGuard(path))
     }
 
-    fn data_node(key: &str, value: &[u8]) -> MemtableNode {
-        MemtableNode::new_for_test(key.to_string(), NodeData::Data(value.to_vec()))
+    fn data_node(key: &[u8], value: &[u8]) -> MemtableNode {
+        MemtableNode::new_for_test(key.to_vec(), NodeData::Data(value.to_vec()))
     }
 
-    fn tombstone_node(key: &str) -> MemtableNode {
-        MemtableNode::new_for_test(key.to_string(), NodeData::Tombstone)
+    fn tombstone_node(key: &[u8]) -> MemtableNode {
+        MemtableNode::new_for_test(key.to_vec(), NodeData::Tombstone)
     }
 
     #[test]
     fn test_data_record_roundtrip() {
         let (mut wal, guard) = make_wal();
-        wal.write_log(&data_node("hello", b"world"));
+        wal.write_log(&data_node(b"hello", b"world"));
         wal.flush_for_test();
 
         let records: Vec<_> = WalIterator::new(&guard.0).unwrap().collect();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].key, "hello");
+        assert_eq!(records[0].key, b"hello");
         assert_eq!(records[0].data, NodeData::Data(b"world".to_vec()));
     }
 
     #[test]
     fn test_tombstone_roundtrip() {
         let (mut wal, guard) = make_wal();
-        wal.write_log(&tombstone_node("gone"));
+        wal.write_log(&tombstone_node(b"gone"));
         wal.flush_for_test();
 
         let records: Vec<_> = WalIterator::new(&guard.0).unwrap().collect();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].key, "gone");
+        assert_eq!(records[0].key, b"gone");
         assert_eq!(records[0].data, NodeData::Tombstone);
     }
 
@@ -181,14 +180,14 @@ mod tests {
     fn test_multiple_records_in_order() {
         let (mut wal, guard) = make_wal();
         for i in 0..5u8 {
-            wal.write_log(&data_node(&format!("k{i}"), &[i]));
+            wal.write_log(&data_node(&format!("k{:?}", i).as_bytes(), &[i]));
         }
         wal.flush_for_test();
 
         let records: Vec<_> = WalIterator::new(&guard.0).unwrap().collect();
         assert_eq!(records.len(), 5);
         for i in 0..5u8 {
-            assert_eq!(records[i as usize].key, format!("k{i}"));
+            assert_eq!(records[i as usize].key, format!("k{:?}", i).as_bytes());
             assert_eq!(records[i as usize].data, NodeData::Data(vec![i]));
         }
     }
@@ -196,9 +195,9 @@ mod tests {
     #[test]
     fn test_mixed_data_and_tombstones() {
         let (mut wal, guard) = make_wal();
-        wal.write_log(&data_node("a", b"v1"));
-        wal.write_log(&tombstone_node("b"));
-        wal.write_log(&data_node("c", b"v3"));
+        wal.write_log(&data_node(b"a", b"v1"));
+        wal.write_log(&tombstone_node(b"b"));
+        wal.write_log(&data_node(b"c", b"v3"));
         wal.flush_for_test();
 
         let records: Vec<_> = WalIterator::new(&guard.0).unwrap().collect();
@@ -211,7 +210,7 @@ mod tests {
     #[test]
     fn test_buffer_not_written_before_flush() {
         let (mut wal, guard) = make_wal();
-        wal.write_log(&data_node("k", b"v"));
+        wal.write_log(&data_node(b"k", b"v"));
 
         // Nothing flushed yet — file should be empty.
         let file_len = fs::metadata(&guard.0).unwrap().len();
@@ -227,9 +226,9 @@ mod tests {
         let (mut wal, guard) = make_wal();
         // First write fills buffer to ~= DEFAULT_WAL_BUFFER_SIZE.
         let big_value = vec![0u8; constants::DEFAULT_WAL_BUFFER_SIZE];
-        wal.write_log(&data_node("k1", &big_value));
+        wal.write_log(&data_node(b"k1", &big_value));
         // Second write: needs_flush() fires, flushes the first record to disk.
-        wal.write_log(&data_node("k2", b"v"));
+        wal.write_log(&data_node(b"k2", b"v"));
 
         let file_len = fs::metadata(&guard.0).unwrap().len();
         assert!(file_len > 0);

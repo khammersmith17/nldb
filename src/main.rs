@@ -8,6 +8,7 @@ pub mod error;
 pub mod memtable;
 pub mod parser;
 pub mod restart;
+pub mod ser;
 pub mod ssindex;
 pub mod sstable;
 pub mod tcp_server;

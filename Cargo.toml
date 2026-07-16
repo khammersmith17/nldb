@@ -12,3 +12,4 @@ uuid = "1.23.3"
 walkdir = "2.5.0"
 serde = { version = "1.0.228", features = [ "derive" ] }
 yaml_serde = "0.10"
+bytes = "1.12.1"

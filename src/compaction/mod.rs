@@ -222,10 +222,10 @@ mod tests {
         format!("test_compaction_{id}.sstable").into()
     }
 
-    async fn make_sstable(entries: &[(&str, NodeData)]) -> (SSTable, TempFile) {
+    async fn make_sstable(entries: &[(&[u8], NodeData)]) -> (SSTable, TempFile) {
         let (mut inner, wal_path) = MemtableInner::new_for_test();
         for (key, data) in entries {
-            inner.insert(key.to_string(), data.clone()).unwrap();
+            inner.insert(key.to_vec(), data.clone()).unwrap();
         }
         let path = unique_test_path();
         let mut fd = std::fs::File::create(&path).unwrap();
@@ -243,13 +243,13 @@ mod tests {
     #[tokio::test]
     async fn test_disjoint_keys_all_present() {
         let (t0, _g0) = make_sstable(&[
-            ("a", NodeData::Data(b"va".to_vec())),
-            ("c", NodeData::Data(b"vc".to_vec())),
+            (b"a", NodeData::Data(b"va".to_vec())),
+            (b"c", NodeData::Data(b"vc".to_vec())),
         ])
         .await;
         let (t1, _g1) = make_sstable(&[
-            ("b", NodeData::Data(b"vb".to_vec())),
-            ("d", NodeData::Data(b"vd".to_vec())),
+            (b"b", NodeData::Data(b"vb".to_vec())),
+            (b"d", NodeData::Data(b"vd".to_vec())),
         ])
         .await;
 
@@ -257,54 +257,54 @@ mod tests {
         let (mut compact, compact_path) = run_compaction(iters, 2);
         let _gc = TempFile(compact_path);
 
-        assert!(compact.search("a").is_ok());
-        assert!(compact.search("b").is_ok());
-        assert!(compact.search("c").is_ok());
-        assert!(compact.search("d").is_ok());
+        assert!(compact.search(b"a").is_ok());
+        assert!(compact.search(b"b").is_ok());
+        assert!(compact.search(b"c").is_ok());
+        assert!(compact.search(b"d").is_ok());
     }
 
     #[tokio::test]
     async fn test_newer_table_wins_on_duplicate_key() {
         // index 0 = newer (matches SSTableCache push_front ordering)
-        let (newer, _g0) = make_sstable(&[("k", NodeData::Data(b"new_val".to_vec()))]).await;
-        let (older, _g1) = make_sstable(&[("k", NodeData::Data(b"old_val".to_vec()))]).await;
+        let (newer, _g0) = make_sstable(&[(b"k", NodeData::Data(b"new_val".to_vec()))]).await;
+        let (older, _g1) = make_sstable(&[(b"k", NodeData::Data(b"old_val".to_vec()))]).await;
 
         let iters = vec![to_iter(newer).await, to_iter(older).await];
         let (mut compact, compact_path) = run_compaction(iters, 2);
         let _gc = TempFile(compact_path);
 
-        assert_eq!(compact.search("k").unwrap(), b"new_val".to_vec());
+        assert_eq!(compact.search(b"k").unwrap(), b"new_val".to_vec());
     }
 
     #[tokio::test]
     async fn test_tombstone_dropped_from_output() {
-        let (t0, _g0) = make_sstable(&[("k", NodeData::Tombstone)]).await;
+        let (t0, _g0) = make_sstable(&[(b"k", NodeData::Tombstone)]).await;
 
         let iters = vec![to_iter(t0).await];
         let (mut compact, compact_path) = run_compaction(iters, 1);
         let _gc = TempFile(compact_path);
 
-        assert!(compact.search("k").is_err());
+        assert!(compact.search(b"k").is_err());
     }
 
     #[tokio::test]
     async fn test_tombstone_hides_older_data() {
         // Newer table (idx 0) has tombstone, older has data — key must not appear in output.
-        let (newer, _g0) = make_sstable(&[("k", NodeData::Tombstone)]).await;
-        let (older, _g1) = make_sstable(&[("k", NodeData::Data(b"stale".to_vec()))]).await;
+        let (newer, _g0) = make_sstable(&[(b"k", NodeData::Tombstone)]).await;
+        let (older, _g1) = make_sstable(&[(b"k", NodeData::Data(b"stale".to_vec()))]).await;
 
         let iters = vec![to_iter(newer).await, to_iter(older).await];
         let (mut compact, compact_path) = run_compaction(iters, 2);
         let _gc = TempFile(compact_path);
 
-        assert!(compact.search("k").is_err());
+        assert!(compact.search(b"k").is_err());
     }
 
     #[tokio::test]
     async fn test_output_keys_are_sorted() {
         let (t0, _g0) = make_sstable(&[
-            ("z", NodeData::Data(b"vz".to_vec())),
-            ("a", NodeData::Data(b"va".to_vec())),
+            (b"z", NodeData::Data(b"vz".to_vec())),
+            (b"a", NodeData::Data(b"va".to_vec())),
         ])
         .await;
 
@@ -313,7 +313,7 @@ mod tests {
         let _gc = TempFile(compact_path);
 
         // Both keys accessible — SSTable search validates index ordering internally
-        assert_eq!(compact.search("a").unwrap(), b"va".to_vec());
-        assert_eq!(compact.search("z").unwrap(), b"vz".to_vec());
+        assert_eq!(compact.search(b"a").unwrap(), b"va".to_vec());
+        assert_eq!(compact.search(b"z").unwrap(), b"vz".to_vec());
     }
 }

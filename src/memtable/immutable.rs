@@ -47,7 +47,7 @@ impl ImmutableMemtable {
         handle.pop_front();
     }
 
-    pub async fn get(&self, key: &str) -> MemtableQuery {
+    pub async fn get(&self, key: &[u8]) -> MemtableQuery {
         let handle = self.table.read().await;
         for inner in handle.iter().rev() {
             let result = inner.get(key);
@@ -101,7 +101,7 @@ mod tests {
     fn make_inner(entries: &[(&str, NodeData)]) -> (MemtableInner, WalGuard) {
         let (mut inner, path) = MemtableInner::new_for_test();
         for (key, data) in entries {
-            inner.insert(key.to_string(), data.clone()).unwrap();
+            inner.insert(key.as_bytes().to_vec(), data.clone()).unwrap();
         }
         (inner, WalGuard(path))
     }
@@ -109,7 +109,7 @@ mod tests {
     #[tokio::test]
     async fn test_empty_returns_none() {
         let imm = ImmutableMemtable::new_empty();
-        assert_eq!(imm.get("key").await, MemtableQuery::None);
+        assert_eq!(imm.get(b"key").await, MemtableQuery::None);
     }
 
     #[tokio::test]
@@ -117,8 +117,8 @@ mod tests {
         let imm = ImmutableMemtable::new_empty();
         let (inner, _guard) = make_inner(&[("k", NodeData::Data(b"v".to_vec()))]);
         imm.insert(inner).await;
-        assert_eq!(imm.get("k").await, MemtableQuery::Data(b"v".to_vec()));
-        assert_eq!(imm.get("missing").await, MemtableQuery::None);
+        assert_eq!(imm.get(b"k").await, MemtableQuery::Data(b"v".to_vec()));
+        assert_eq!(imm.get(b"missing").await, MemtableQuery::None);
     }
 
     #[tokio::test]
@@ -128,7 +128,7 @@ mod tests {
         let (inner_b, _gb) = make_inner(&[("k", NodeData::Data(b"v2".to_vec()))]);
         imm.insert(inner_a).await; // older
         imm.insert(inner_b).await; // newer
-        assert_eq!(imm.get("k").await, MemtableQuery::Data(b"v2".to_vec()));
+        assert_eq!(imm.get(b"k").await, MemtableQuery::Data(b"v2".to_vec()));
     }
 
     #[tokio::test]
@@ -138,7 +138,7 @@ mod tests {
         let (inner_b, _gb) = make_inner(&[("k", NodeData::Tombstone)]);
         imm.insert(inner_a).await; // older
         imm.insert(inner_b).await; // newer tombstone
-        assert_eq!(imm.get("k").await, MemtableQuery::Tombstone);
+        assert_eq!(imm.get(b"k").await, MemtableQuery::Tombstone);
     }
 
     #[tokio::test]
@@ -149,7 +149,7 @@ mod tests {
         imm.insert(inner_a).await; // older
         imm.insert(inner_b).await; // newer
         imm.pop().await;
-        assert_eq!(imm.get("only_a").await, MemtableQuery::None);
-        assert_eq!(imm.get("only_b").await, MemtableQuery::Data(b"v".to_vec()));
+        assert_eq!(imm.get(b"only_a").await, MemtableQuery::None);
+        assert_eq!(imm.get(b"only_b").await, MemtableQuery::Data(b"v".to_vec()));
     }
 }

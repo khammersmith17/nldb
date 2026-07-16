@@ -1,5 +1,5 @@
 # NLDB
-This is an implementation (in all reality a rather naive one) of a LSM Tree style database for fun.
+This is an implementation (in all reality a rather naive one) of a LSM Tree style database for fun. Thus, this implement is called Naive LSM Tree Database (NLDB).
 
 ## Implementation status
 [X] memtable (red black tree)

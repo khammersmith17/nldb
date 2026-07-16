@@ -8,11 +8,23 @@ architecture.
 
 ## Client Request Protocol
 
-Requests are binary messages with a text command token followed by
+All messages (requests and responses) are length-framed: a 4-byte big-endian
+`u32` precedes every message body and gives the byte length of that body. The
+receiver reads the 4-byte frame header first, then reads exactly that many bytes,
+handling TCP partial reads transparently.
+
+```
+[msg_len_u32_be][body]
+```
+
+The `msg_len` value covers only the body — it does not include the 4 bytes of
+the frame header itself.
+
+### Request body format
+
+Request bodies are binary messages with a text command token followed by
 varint-length-prefixed fields. All varints use the same unsigned LEB128 encoding
 described below.
-
-### Format
 
 ```
 <command> <SP> <key_len_varint><key> [<value_len_varint><value>]
@@ -36,11 +48,12 @@ has been deleted.
 GET <key_len_varint><key>
 ```
 
-Example — get key `"foo"` (key length 3, fits in one varint byte `0x03`):
+Example — get key `"foo"` (key length 3, fits in one varint byte `0x03`),
+with a 4-byte frame header (`0x00 0x00 0x00 0x08` = 8 body bytes):
 
 ```
-47 45 54 20  03  66 6F 6F
-G  E  T  SP  3   f  o  o
+00 00 00 08  47 45 54 20  03  66 6F 6F
+[frame len]  G  E  T  SP  3   f  o  o
 ```
 
 #### INSERT
@@ -51,11 +64,12 @@ Store `value` at `key`, overwriting any existing value.
 INSERT <key_len_varint><key><value_len_varint><value>
 ```
 
-Example — insert key `"foo"`, value `"bar"`:
+Example — insert key `"foo"`, value `"bar"`, frame header
+(`0x00 0x00 0x00 0x0F` = 15 body bytes):
 
 ```
-49 4E 53 45 52 54 20  03  66 6F 6F  03  62 61 72
-I  N  S  E  R  T  SP  3   f  o  o   3   b  a  r
+00 00 00 0F  49 4E 53 45 52 54 20  03  66 6F 6F  03  62 61 72
+[frame len]  I  N  S  E  R  T  SP  3   f  o  o   3   b  a  r
 ```
 
 #### DELETE
@@ -78,6 +92,41 @@ The parser returns `NldbError::InvalidQuery` for any of the following:
 - Value length field declares more bytes than remain in the buffer (INSERT)
 - Key bytes are not valid UTF-8
 - A varint with more than 10 continuation bytes (malformed / overflow protection)
+
+---
+
+## Server Response Protocol
+
+### Success response
+
+#### GET
+
+```
+[0x01][blob_len_varint][blob]
+```
+
+The `blob_len_varint` encodes the byte length of the value. If the key does not
+exist or has been deleted, `blob_len_varint` is `0` and no blob bytes follow.
+
+#### INSERT and DELETE
+
+```
+[0x01]
+```
+
+A single success byte with no additional payload.
+
+### Error response
+
+```
+[0x00][error_code_varint]
+```
+
+| Code | Meaning |
+|------|---------|
+| `0x01` | Key not found |
+| `0x02` | Invalid request (parse error) |
+| `0x03` | Internal error |
 
 ---
 

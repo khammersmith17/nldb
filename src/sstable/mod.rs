@@ -54,7 +54,7 @@ impl SSTableCache {
         }
     }
 
-    pub async fn search(&self, key: &str) -> Result<Blob, SSTableError> {
+    pub async fn search(&self, key: &[u8]) -> Result<Blob, SSTableError> {
         let handle = self.cache.read().await;
         let num_tables = handle.len();
 
@@ -132,7 +132,7 @@ impl SSTable {
         Ok(SSTable { index, fd, version })
     }
 
-    pub fn search(&mut self, key: &str) -> Result<Blob, SSTableError> {
+    pub fn search(&mut self, key: &[u8]) -> Result<Blob, SSTableError> {
         let Some((start, end)) = self.index.range_search_start(key) else {
             return Err(SSTableError::DiskRecordNotFound);
         };
@@ -144,7 +144,7 @@ impl SSTable {
         &mut self,
         start_offset: u64,
         end_offset: u64,
-        key: &str,
+        key: &[u8],
     ) -> Result<Blob, SSTableError> {
         disk::search_data_block(&mut self.fd, start_offset, end_offset, key)
     }
@@ -158,7 +158,7 @@ mod tests {
     use crate::wal::Wal;
     use std::fs;
 
-    fn make_memtable_with_records(records: &[(&str, &[u8])]) -> (MemtableInner, PathBuf) {
+    fn make_memtable_with_records(records: &[(&[u8], &[u8])]) -> (MemtableInner, PathBuf) {
         let wal_path: PathBuf =
             format!("test_sstable_wal_{:?}.log", std::thread::current().id()).into();
         let fd = fs::File::create(&wal_path).unwrap();
@@ -172,7 +172,7 @@ mod tests {
         };
         for (key, data) in records {
             table
-                .insert(key.to_string(), NodeData::Data(data.to_vec()))
+                .insert(key.to_vec(), NodeData::Data(data.to_vec()))
                 .unwrap();
         }
         (table, wal_path)
@@ -180,12 +180,12 @@ mod tests {
 
     #[test]
     fn roundtrip_search() {
-        let records = [
-            ("apple", b"fruit".as_slice()),
-            ("banana", b"yellow"),
-            ("cherry", b"red"),
-            ("date", b"sweet"),
-            ("elderberry", b"dark"),
+        let records: Vec<(&'static [u8], &'static [u8])> = vec![
+            (b"apple", b"fruit"),
+            (b"banana", b"yellow"),
+            (b"cherry", b"red"),
+            (b"date", b"sweet"),
+            (b"elderberry", b"dark"),
         ];
 
         let sstable_path: PathBuf =
@@ -203,11 +203,11 @@ mod tests {
 
         for (key, expected_data) in &records {
             let result = sstable.search(key).unwrap();
-            assert_eq!(result, *expected_data, "data mismatch for key {key}");
+            assert_eq!(result, *expected_data, "data mismatch for key {:?}", key);
         }
 
         assert!(matches!(
-            sstable.search("notakey"),
+            sstable.search(b"notakey"),
             Err(SSTableError::DiskRecordNotFound)
         ));
 

@@ -3,7 +3,7 @@ use crate::memtable::inner::{MemtableNode, NodeData};
 use crate::util;
 
 pub fn encode_memtable_node(node: &MemtableNode) -> Vec<u8> {
-    let node_key = node.key.as_str();
+    let node_key = &node.key;
     let (key_varint, varint_len) = util::encode_varint(node_key.len());
     match node.data {
         NodeData::Data(ref data) => encode_insert_record(node_key, &key_varint[..varint_len], data),
@@ -12,7 +12,7 @@ pub fn encode_memtable_node(node: &MemtableNode) -> Vec<u8> {
 }
 
 pub fn merge_encode_record(record: crate::disk::DiskRecord) -> Vec<u8> {
-    let key = record.key.as_str();
+    let key = &record.key;
     let (key_varint, varint_len) = util::encode_varint(key.len());
 
     match record.data {
@@ -21,7 +21,7 @@ pub fn merge_encode_record(record: crate::disk::DiskRecord) -> Vec<u8> {
     }
 }
 
-pub fn encode_tombstone_record(key: &str, key_varint: &[u8]) -> Vec<u8> {
+pub fn encode_tombstone_record(key: &[u8], key_varint: &[u8]) -> Vec<u8> {
     // Define log buffer size.
     let log_size = key.len() + key_varint.len();
     let (log_len_varint, log_varint_len) = util::encode_varint(log_size);
@@ -38,11 +38,11 @@ pub fn encode_tombstone_record(key: &str, key_varint: &[u8]) -> Vec<u8> {
 
     // Write key.
     let key_start = key_varint_start + key_varint.len();
-    buffer[key_start..].copy_from_slice(key.as_bytes());
+    buffer[key_start..].copy_from_slice(key);
     buffer
 }
 
-pub fn encode_insert_record(key: &str, key_varint: &[u8], data: &[u8]) -> Vec<u8> {
+pub fn encode_insert_record(key: &[u8], key_varint: &[u8], data: &[u8]) -> Vec<u8> {
     // Define log buffer size.
     let (data_len_varint, data_varint_len) = util::encode_varint(data.len());
     let log_size = key.len() + key_varint.len() + data_varint_len + data.len();
@@ -60,7 +60,7 @@ pub fn encode_insert_record(key: &str, key_varint: &[u8], data: &[u8]) -> Vec<u8
 
     // Write key.
     let key_start = key_varint_start + key_varint.len();
-    buffer[key_start..key_start + key.len()].copy_from_slice(key.as_bytes());
+    buffer[key_start..key_start + key.len()].copy_from_slice(key);
 
     // Write data varint.
     let data_varint_start = key_start + key.len();

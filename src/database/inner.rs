@@ -13,14 +13,44 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::mpsc::{self, Sender};
 
+fn construct_memtable(live_wal: Option<WalArtifact>, config: &NldbConfig) -> Memtable {
+    if let Some(wal) = live_wal {
+        Memtable::new_from_wal(
+            &wal.filename,
+            config.max_memtable_size as usize,
+            config.max_memtable_nodes as usize,
+        )
+        .expect("Unable to create memtable from WAL file")
+    } else {
+        Memtable::new(
+            config.max_memtable_size as usize,
+            config.max_memtable_nodes as usize,
+        )
+        .expect("Unable to create memtable")
+    }
+}
+
+fn construct_sstable_cache(
+    sstable_files: Vec<SSTableArtifact>,
+    config: &NldbConfig,
+) -> SSTableCache {
+    if sstable_files.is_empty() {
+        SSTableCache::new(config.compaction_rate as usize)
+    } else {
+        SSTableCache::from_restart(sstable_files, config.compaction_rate as usize)
+    }
+}
+
 /// Inner memtable struct that holds all database implementation.
 /// On write/delete, if that memtable is full, it will return an error. On
 /// [MemtableError::TableFull], the table will be rotated out while being flushed.
+///
+/// Type is wrapped with Arc in the publicly exposed type, `[super::Nldb]`.
 #[derive(Debug)]
-pub struct NldbInner {
+pub(super) struct NldbInner {
     memtable: Memtable,
     sstable_cache: SSTableCache,
-    cache: DashCache<String, Blob>,
+    cache: DashCache<Blob, Blob>,
     poisoned: Arc<AtomicBool>,
     signal: Sender<CompactionSignal>,
     memtable_channel: Sender<MemtableFlushSignal>,
@@ -28,102 +58,30 @@ pub struct NldbInner {
 }
 
 impl NldbInner {
-    fn new_empty(config: &NldbConfig) -> NldbInner {
-        let memtable = Memtable::new(
-            config.max_memtable_size as usize,
-            config.max_memtable_nodes as usize,
-        )
-        .expect("Unable to create memtable");
-
-        let cache: DashCache<String, Blob> =
-            DashCache::new(NonZeroUsize::new(config.cache_size as usize).unwrap());
-        let sstable_cache = SSTableCache::new(config.compaction_rate as usize);
-        let poisoned = Arc::new(AtomicBool::new(false));
-
-        // TODO: tune correct boundry on compaction channel size.
-        let (signal, receiver) = mpsc::channel::<CompactionSignal>(100);
-
-        // TODO: tune correct boundry on memtable flush channel size.
-        let (memtable_channel, table_flush_recv) = mpsc::channel(100);
-
-        let (sstable_ack_tx, sstable_ack_rx) = mpsc::channel::<SSTableLoadAck>(1);
-        let immutable = ImmutableMemtable::new_empty();
-        let _compaction_handle = tokio::task::spawn(sstable_background(
-            receiver,
-            sstable_cache.clone(),
-            immutable.clone(),
-            sstable_ack_tx,
-        ));
-
-        let shared_immutable = immutable.clone();
-        let shared_flag = poisoned.clone();
-        let compaction_signal = signal.clone();
-
-        // Do not save the handle, let Drop take care of clean up.
-        let _ = tokio::task::spawn(flush_memtable(
-            shared_immutable,
-            compaction_signal,
-            shared_flag,
-            table_flush_recv,
-            sstable_ack_rx,
-        ));
-
-        NldbInner {
-            memtable,
-            sstable_cache,
-            cache,
-            poisoned,
-            signal,
-            immutable,
-            memtable_channel,
-        }
-    }
-
-    pub fn new(
+    /// Construct a new in memory database instance. If there is existing state, the "restart" path
+    /// is used to read in current state, otherwise, an empty state is created.
+    pub(super) fn new(
         sstable_files: Vec<SSTableArtifact>,
         mut wal_files: Vec<WalArtifact>,
         config: &NldbConfig,
     ) -> NldbInner {
-        if sstable_files.is_empty() && wal_files.is_empty() {
-            return Self::new_empty(config);
-        }
+        let memtable = construct_memtable(wal_files.pop(), config);
 
-        let memtable = if let Some(new_wal) = wal_files.pop() {
-            Memtable::new_from_wal(
-                &new_wal.filename,
-                config.max_memtable_size as usize,
-                config.max_memtable_nodes as usize,
-            )
-            .expect("Unable to create memtable from WAL file")
-        } else {
-            Memtable::new(
-                config.max_memtable_size as usize,
-                config.max_memtable_nodes as usize,
-            )
-            .expect("Unable to create memtable")
-        };
-
-        let cache: DashCache<String, Blob> =
+        let cache: DashCache<Blob, Blob> =
             DashCache::new(NonZeroUsize::new(config.cache_size as usize).unwrap());
 
-        let sstable_cache = if sstable_files.is_empty() {
-            SSTableCache::new(config.compaction_rate as usize)
-        } else {
-            SSTableCache::from_restart(sstable_files, config.compaction_rate as usize)
-        };
+        let sstable_cache = construct_sstable_cache(sstable_files, config);
         let poisoned = Arc::new(AtomicBool::new(false));
 
-        // TODO: tune correct boundry on compaction channel size.
-        let (signal, receiver) = mpsc::channel::<CompactionSignal>(100);
+        let (signal, receiver) =
+            mpsc::channel::<CompactionSignal>(config.compaction_queue_size as usize);
 
-        // TODO: tune correct boundry on memtable flush channel size.
-        let (memtable_channel, table_flush_recv) = mpsc::channel::<MemtableFlushSignal>(100);
+        let (memtable_channel, table_flush_recv) =
+            mpsc::channel::<MemtableFlushSignal>(config.memtable_flush_queue_size as usize);
 
         let (sstable_ack_tx, sstable_ack_rx) = mpsc::channel::<SSTableLoadAck>(1);
-        let immutable = {
-            let c = memtable_channel.clone();
-            ImmutableMemtable::new(wal_files, &config, c)
-        };
+        let immutable = ImmutableMemtable::new(wal_files, &config, memtable_channel.clone());
+
         let _compaction_handle = tokio::task::spawn(sstable_background(
             receiver,
             sstable_cache.clone(),
@@ -135,8 +93,7 @@ impl NldbInner {
         let shared_flag = poisoned.clone();
         let compaction_signal = signal.clone();
 
-        // Do not save the handle, let Drop take care of clean up.
-        let _ = tokio::task::spawn(flush_memtable(
+        let _memtable_flush_handle = tokio::task::spawn(flush_memtable(
             shared_immutable,
             compaction_signal,
             shared_flag,
@@ -159,7 +116,7 @@ impl NldbInner {
     // Second check memtable.
     // Third check immutable table being flushed to disk.
     // Fourth check SSTables.
-    pub async fn get(&self, key: String) -> Option<Blob> {
+    pub(super) async fn get(&self, key: Blob) -> Option<Blob> {
         self.check_poison_flag();
         let cached = self.cache.get(&key).await;
 
@@ -185,7 +142,7 @@ impl NldbInner {
         None
     }
 
-    async fn read_memtable(&self, key: &str) -> Option<Blob> {
+    async fn read_memtable(&self, key: &[u8]) -> Option<Blob> {
         match self.memtable.get(&key).await {
             MemtableQuery::Data(blob) => Some(blob),
             MemtableQuery::Tombstone => None,
@@ -193,7 +150,7 @@ impl NldbInner {
         }
     }
 
-    async fn read_immutable_table(&self, key: &str) -> Option<Blob> {
+    async fn read_immutable_table(&self, key: &[u8]) -> Option<Blob> {
         match self.immutable.get(&key).await {
             MemtableQuery::Data(blob) => Some(blob),
             MemtableQuery::Tombstone => None,
@@ -201,18 +158,18 @@ impl NldbInner {
         }
     }
 
-    async fn read_through_cache(&self, key: String, value: Blob) {
-        self.cache.insert(key.to_string(), value.clone()).await;
+    async fn read_through_cache(&self, key: Blob, value: Blob) {
+        self.cache.insert(key, value.clone()).await;
     }
 
     // Evict a key if cached on a insert/delete. DashCache internally handles the evict only if it
     // exists.
     #[inline]
-    async fn evict_if_cached(&self, key: &str) {
+    async fn evict_if_cached(&self, key: &[u8]) {
         let _ = self.cache.evict(key).await;
     }
 
-    pub async fn delete(&self, key: String) {
+    pub(super) async fn delete(&self, key: Blob) {
         self.check_poison_flag();
         self.evict_if_cached(&key).await;
         match self.memtable.delete(key).await {
@@ -233,7 +190,7 @@ impl NldbInner {
         }
     }
 
-    pub async fn write(&self, key: String, value: Blob) {
+    pub(super) async fn write(&self, key: Blob, value: Blob) {
         self.check_poison_flag();
         self.evict_if_cached(&key).await;
         match self.memtable.insert(key, value).await {
@@ -278,7 +235,8 @@ impl NldbInner {
 
 impl Drop for NldbInner {
     fn drop(&mut self) {
-        // When this is dropped, signal to background working thread to exit.
+        // When this is dropped, signal to the compaction and memtable flush background threads
+        // to exit, to gracefully handle shutdown on exit.
         self.signal
             .blocking_send(CompactionSignal::Shutdown)
             .expect("Unable to send compaction shutdown signal");
