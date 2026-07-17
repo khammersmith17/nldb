@@ -292,6 +292,7 @@ dependencies = [
  "bytes",
  "dash_cache",
  "memmap2",
+ "num_cpus",
  "rayon",
  "serde",
  "tokio",

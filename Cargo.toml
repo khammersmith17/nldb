@@ -13,3 +13,4 @@ walkdir = "2.5.0"
 serde = { version = "1.0.228", features = [ "derive" ] }
 yaml_serde = "0.10"
 bytes = "1.12.1"
+num_cpus = "1.17.0"
