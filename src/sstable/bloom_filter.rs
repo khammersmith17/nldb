@@ -24,7 +24,7 @@ pub struct BloomFilter {
 impl BloomFilter {
     pub fn new(size: usize) -> BloomFilter {
         let num_bits = size * 10;
-        let num_words = (num_bits + 63) / 64;
+        let num_words = (num_bits + 63).div_ceil(64);
         let bits = vec![0_u64; num_words];
         let num_bits = 64 * bits.len() as u64;
         let num_hashes =
@@ -63,7 +63,7 @@ impl BloomFilter {
         let h2 = hash2(key);
 
         for i in 0..self.num_hashes {
-            let bit_idx = h1.wrapping_add((i as u64).wrapping_mul(h2)) % self.num_bits;
+            let bit_idx = h1.wrapping_add((i).wrapping_mul(h2)) % self.num_bits;
             let word_idx = (bit_idx / 64) as usize;
             let bit_offset = (bit_idx % 64) as usize;
             self.bits[word_idx] |= 1 << bit_offset;
@@ -75,7 +75,7 @@ impl BloomFilter {
         let h2 = hash2(key);
 
         for i in 0..self.num_hashes {
-            let bit_idx = h1.wrapping_add((i as u64).wrapping_mul(h2)) % self.num_bits;
+            let bit_idx = h1.wrapping_add((i).wrapping_mul(h2)) % self.num_bits;
             let word_idx = (bit_idx / 64) as usize;
             let bit_offset = (bit_idx % 64) as usize;
             if self.bits[word_idx] & (1 << bit_offset) == 0 {

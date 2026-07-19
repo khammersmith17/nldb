@@ -72,12 +72,11 @@ impl ImmutableMemtable {
         let head = {
             let handle = self.table.read().await;
 
-            let head = Arc::clone(
+            Arc::clone(
                 handle
                     .front()
                     .expect("Flush on immutable table without any tables in the queue"),
-            );
-            head
+            )
         };
 
         flush_memtable_inner(fd, head)

@@ -33,7 +33,7 @@ fn parse_to_space(buffer: &[u8], offset: &mut usize) {
 }
 
 fn parse_key(buffer: &[u8], offset: usize) -> Result<(Blob, usize), NldbError> {
-    let (key_len, bytes_walked) = util::decode_untrusted_varint(&buffer, offset)?;
+    let (key_len, bytes_walked) = util::decode_untrusted_varint(buffer, offset)?;
     let key_start = offset + bytes_walked;
     let key_end = key_start + key_len as usize;
 

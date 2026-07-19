@@ -77,14 +77,10 @@ impl SSTableCache {
     }
 
     pub async fn push(&self, table: SSTable) -> usize {
-        let len = {
-            let wrapped_table = Arc::new(Mutex::new(table));
-            let mut handle = self.cache.write().await;
-            handle.push_front(wrapped_table);
-            handle.len()
-        };
-
-        len
+        let wrapped_table = Arc::new(Mutex::new(table));
+        let mut handle = self.cache.write().await;
+        handle.push_front(wrapped_table);
+        handle.len()
     }
 
     pub async fn replace_with_compact_table(&self, new_table: SSTable) {

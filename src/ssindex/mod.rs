@@ -25,7 +25,7 @@ fn decode_index(buffer: &[u8], index_len: usize) -> (Vec<Blob>, Vec<u64>) {
     for _ in 0..index_len {
         let (key_len, bytes_walked) = util::decode_varint(buffer, offset);
         offset += bytes_walked;
-        let key_buffer = (&buffer[offset..offset + key_len as usize]).to_vec();
+        let key_buffer = buffer[offset..offset + key_len as usize].to_vec();
         keys.push(key_buffer);
 
         offset += key_len as usize;

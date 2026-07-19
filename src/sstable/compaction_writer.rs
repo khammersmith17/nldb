@@ -40,8 +40,8 @@ impl CompactionWriter {
         let filename = util::generate_sstable_file_name();
         let mut fd = File::create(&filename)?;
 
-        fd.write(&constants::NLDB_SSTABLE_HEADER)?;
-        fd.write(&constants::V0_HEADER.to_be_bytes())?;
+        let _ = fd.write(&constants::NLDB_SSTABLE_HEADER)?;
+        let _ = fd.write(&constants::V0_HEADER.to_be_bytes())?;
 
         let index = Vec::with_capacity(1024);
         let write_buffer = Vec::with_capacity(4096);
@@ -73,7 +73,7 @@ impl CompactionWriter {
         }
 
         if self.write_buffer.len() + record_size >= self.write_buffer.capacity() {
-            self.fd.write(&self.write_buffer)?;
+            let _ = self.fd.write(&self.write_buffer)?;
             self.write_buffer.clear();
         }
 
@@ -85,20 +85,23 @@ impl CompactionWriter {
 
     /// Flush buffer, then write index block, and bloom filter.
     pub fn finish(mut self) -> std::io::Result<PathBuf> {
-        self.fd.write(&self.write_buffer)?;
+        let _ = self.fd.write(&self.write_buffer)?;
+
         let index_block_start = self.disk_offset;
         let index_block_len = self.index.len();
         let index_block_buffer = encode_index_block(self.index);
         let bloom_filter_start = index_block_start + index_block_buffer.len() as u64;
-        self.fd.write(&index_block_buffer)?;
+        let _ = self.fd.write(&index_block_buffer)?;
+
         let bloom_filter_buffer = self.bloom_filter.serialize();
-        self.fd.write(&bloom_filter_buffer)?;
+        let _ = self.fd.write(&bloom_filter_buffer)?;
+
         let footer = encode_footer(
-            index_block_start as u64,
+            index_block_start,
             index_block_len as u64,
-            bloom_filter_start as u64,
+            bloom_filter_start,
         );
-        self.fd.write(&footer)?;
+        let _ = self.fd.write(&footer)?;
         self.fd.flush()?;
         Ok(self.filename)
     }

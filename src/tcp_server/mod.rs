@@ -15,7 +15,7 @@ pub async fn run(db: Nldb) {
         let Ok((stream, _)) = listener.accept().await else {
             continue;
         };
-        let _ = tokio::task::spawn(serve_connection(stream, db.clone()));
+        tokio::task::spawn(serve_connection(stream, db.clone()));
     }
 }
 

@@ -25,6 +25,7 @@ fn parse_arg(arg_name: &str, cli_args: &mut Args) -> Result<ArgValue, NldbError>
         | "--max_memtable-size"
         | "--compaction-rate"
         | "--cache-size"
+        | "--cache-shards"
         | "--compaction-queue-size"
         | "--memtable-flush-queue_size" => {
             let Some(arg_value) = cli_args.next() else {
@@ -33,7 +34,7 @@ fn parse_arg(arg_name: &str, cli_args: &mut Args) -> Result<ArgValue, NldbError>
             Ok(ArgValue::U64(arg_value.parse::<u64>()?))
         }
         "--from-config-file" => Ok(ArgValue::ConfigPath),
-        _ => return Err(NldbError::InvalidParameter),
+        _ => Err(NldbError::InvalidParameter),
     }
 }
 
