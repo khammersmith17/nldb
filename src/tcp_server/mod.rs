@@ -15,7 +15,7 @@ pub async fn run(db: Nldb) {
         let Ok((stream, _)) = listener.accept().await else {
             continue;
         };
-        let _ = tokio::task::spawn(serve_connection(stream, db.clone()));
+        tokio::task::spawn(serve_connection(stream, db.clone()));
     }
 }
 
@@ -46,7 +46,7 @@ async fn serve_connection(mut stream: TcpStream, db: Nldb) {
 async fn handle_request(statement: NldbRequest, db: &Nldb, out_buffer: &mut BytesMut) {
     match statement {
         NldbRequest::Get { key } => {
-            let query_result = db.get(key).await;
+            let query_result = db.get(&key).await;
             ser::serialize_get_response(query_result, out_buffer)
         }
         NldbRequest::Insert { key, value } => {
@@ -84,4 +84,3 @@ async fn read_message(stream: &mut TcpStream, buffer: &mut BytesMut) -> (usize, 
         }
     }
 }
-

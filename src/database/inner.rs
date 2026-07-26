@@ -67,8 +67,10 @@ impl NldbInner {
     ) -> NldbInner {
         let memtable = construct_memtable(wal_files.pop(), config);
 
-        let cache: DashCache<Blob, Blob> =
-            DashCache::new(NonZeroUsize::new(config.cache_size as usize).unwrap());
+        let cache: DashCache<Blob, Blob> = DashCache::with_num_shards_and_capacity(
+            NonZeroUsize::new(config.cache_shards as usize).unwrap(),
+            NonZeroUsize::new(config.cache_size as usize).unwrap(),
+        );
 
         let sstable_cache = construct_sstable_cache(sstable_files, config);
         let poisoned = Arc::new(AtomicBool::new(false));
@@ -80,7 +82,7 @@ impl NldbInner {
             mpsc::channel::<MemtableFlushSignal>(config.memtable_flush_queue_size as usize);
 
         let (sstable_ack_tx, sstable_ack_rx) = mpsc::channel::<SSTableLoadAck>(1);
-        let immutable = ImmutableMemtable::new(wal_files, &config, memtable_channel.clone());
+        let immutable = ImmutableMemtable::new(wal_files, config, memtable_channel.clone());
 
         let _compaction_handle = tokio::task::spawn(sstable_background(
             receiver,
@@ -116,26 +118,26 @@ impl NldbInner {
     // Second check memtable.
     // Third check immutable table being flushed to disk.
     // Fourth check SSTables.
-    pub(super) async fn get(&self, key: Blob) -> Option<Blob> {
+    pub(super) async fn get(&self, key: &[u8]) -> Option<Blob> {
         self.check_poison_flag();
-        let cached = self.cache.get(&key).await;
+        let cached = self.cache.get(key).await;
 
         if cached.is_some() {
             return cached;
         }
 
         if let Some(blob) = self.read_memtable(&key).await {
-            self.read_through_cache(key.clone(), blob.clone()).await;
+            self.read_through_cache(key.to_owned(), blob.clone()).await;
             return Some(blob);
         }
 
         if let Some(blob) = self.read_immutable_table(&key).await {
-            self.read_through_cache(key.clone(), blob.clone()).await;
+            self.read_through_cache(key.to_owned(), blob.clone()).await;
             return Some(blob);
         }
 
         if let Ok(value) = self.sstable_cache.search(&key).await {
-            self.read_through_cache(key, value.clone()).await;
+            self.read_through_cache(key.to_owned(), value.clone()).await;
             return Some(value);
         }
 
@@ -143,7 +145,7 @@ impl NldbInner {
     }
 
     async fn read_memtable(&self, key: &[u8]) -> Option<Blob> {
-        match self.memtable.get(&key).await {
+        match self.memtable.get(key).await {
             MemtableQuery::Data(blob) => Some(blob),
             MemtableQuery::Tombstone => None,
             _ => None,
@@ -151,7 +153,7 @@ impl NldbInner {
     }
 
     async fn read_immutable_table(&self, key: &[u8]) -> Option<Blob> {
-        match self.immutable.get(&key).await {
+        match self.immutable.get(key).await {
             MemtableQuery::Data(blob) => Some(blob),
             MemtableQuery::Tombstone => None,
             _ => None,
@@ -194,7 +196,7 @@ impl NldbInner {
         self.check_poison_flag();
         self.evict_if_cached(&key).await;
         match self.memtable.insert(key, value).await {
-            Ok(_) => return,
+            Ok(_) => (),
             Err(e) => {
                 let MemtableError::TableFull(key, value) = e;
                 self.rotate_table().await;

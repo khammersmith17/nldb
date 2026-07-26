@@ -34,6 +34,22 @@ pub fn generate_sstable_file_name() -> PathBuf {
     format!("{start_ts}.sstable").into()
 }
 
+// Given a length of a block on disk, derive the number of bytes it takes to represent the varint
+// for the length of this block.
+pub fn varint_size_from_len(len: usize) -> usize {
+    let mut size = 1_usize;
+
+    let mut upper_bound = 1_usize << 7;
+
+    while len >= upper_bound && size <= 10 {
+        size += 1;
+        upper_bound <<= 7;
+    }
+
+    debug_assert!(size <= 10_usize);
+    size
+}
+
 pub fn encode_varint(mut value: usize) -> ([u8; 10], usize) {
     let mut buffer = [0_u8; 10];
     let mut idx = 0_usize;
@@ -195,5 +211,23 @@ mod tests {
         let buf = vec![0x01_u8, 0x00];
         let arr = get_be_array2(buf);
         assert_eq!(u16::from_be_bytes(arr), 256);
+    }
+
+    #[test]
+    fn test_varint_size_from_len() {
+        let r1 = varint_size_from_len(120);
+        assert_eq!(r1, 1);
+
+        let r2 = varint_size_from_len(128);
+        assert_eq!(r2, 2);
+
+        let r3 = varint_size_from_len(250);
+        assert_eq!(r3, 2);
+
+        let r4 = varint_size_from_len(16383);
+        assert_eq!(r4, 2);
+
+        let r4 = varint_size_from_len(16384);
+        assert_eq!(r4, 3);
     }
 }

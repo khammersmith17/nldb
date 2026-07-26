@@ -24,10 +24,10 @@ pub const DEFAULT_MAX_MEMTABLE_SIZE: u64 = 4_000_000_u64; // 4 MB
 pub const DEFAULT_MEMTABLE_FLUSH_QUEUE: u64 = 100_u64;
 
 // CONFIG FILE PATH
-pub const NLDB_CONFIG_FILE_PATH: &'static str = "nldb_conf.yaml";
+pub const NLDB_CONFIG_FILE_PATH: &str = "nldb_conf.yaml";
 
 // TCP ADDRESS
-pub const TCP_ADDRESS: &'static str = "127.0.0.1:7211";
+pub const TCP_ADDRESS: &str = "127.0.0.1:7211";
 
 // DATA CONSTRAINTS
 pub const MAX_MESSAGE_SIZE: usize = (2 << 19) * 10;
@@ -37,10 +37,11 @@ use num_cpus;
 use std::sync::OnceLock;
 
 pub const DEFAULT_CACHE_SIZE: u64 = 2048_u64; // Large depends on object size.
-// TODO: Add cache size tracking and provide both count and size eviction methods.
+static DEFAULT_NUM_CACHE_SHARDS: OnceLock<u64> = OnceLock::new();
 
-static DEFAULT_NUM_CACHE_SHARDS: OnceLock<usize> = OnceLock::new();
-
-pub fn get_num_cpus() -> usize {
-    *DEFAULT_NUM_CACHE_SHARDS.get_or_init(|| num_cpus::get())
+pub fn get_default_cache_shards() -> u64 {
+    *DEFAULT_NUM_CACHE_SHARDS.get_or_init(|| num_cpus::get() as u64)
 }
+
+// 4KB buffer size for initial read when seeking directly to offset of a record.
+pub const RECORD_READ_BUFFER_SIZE: u64 = 4096;

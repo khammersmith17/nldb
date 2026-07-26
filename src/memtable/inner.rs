@@ -216,7 +216,7 @@ impl PartialEq for MemtableNode {
 
 impl PartialOrd for MemtableNode {
     fn partial_cmp(&self, other: &MemtableNode) -> Option<Ordering> {
-        self.key.partial_cmp(&other.key)
+        Some(self.cmp(other))
     }
 }
 
@@ -303,7 +303,7 @@ impl MemtableInner {
     }
 
     pub fn flush_to_disk(&self, fd: &mut File) -> std::io::Result<()> {
-        sstable::encode::write_sstable(&self, fd)?;
+        sstable::encode::write_sstable(self, fd)?;
         Ok(())
     }
 
@@ -381,7 +381,7 @@ impl MemtableInner {
         loop {
             parent = curr;
             let node = &self.arena[curr];
-            match key.cmp(&node) {
+            match key.cmp(node) {
                 Ordering::Equal => {
                     return InsertionPosition::ExistingNode(curr);
                 }
@@ -416,7 +416,7 @@ impl MemtableInner {
 
             // SAFETY: Grandparent exists as parent is Red, thus not root.
             let grandparent_idx = self.arena[parent_idx].parent.unwrap();
-            match (&self.arena[node_idx]).uncle(&self.arena) {
+            match (self.arena[node_idx]).uncle(&self.arena) {
                 Some(u) if self.arena[u].color == Color::Red => {
                     self.arena[u].color = Color::Black;
                     self.arena[parent_idx].color = Color::Black;

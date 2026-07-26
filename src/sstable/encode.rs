@@ -16,7 +16,7 @@ pub fn encode_index_block(index_block: Vec<(Blob, u64)>) -> Vec<u8> {
 
         buffer[offset..offset + varint_len].copy_from_slice(&key_len_varint[..varint_len]);
         offset += varint_len;
-        buffer[offset..offset + key.len()].copy_from_slice(&key);
+        buffer[offset..offset + key.len()].copy_from_slice(key);
         offset += key.len();
         buffer[offset..offset + 8].copy_from_slice(&key_offset.to_be_bytes());
         offset += 8;
@@ -45,8 +45,8 @@ pub fn write_sstable(table: &MemtableInner, fd: &mut File) -> std::io::Result<()
     let mut index_block: Vec<(Blob, u64)> =
         Vec::with_capacity(table.current_size / constants::DISK_BLOCK_SIZE as usize);
     let mut bloom_filter = BloomFilter::new(table.arena.len());
-    fd.write(&constants::NLDB_SSTABLE_HEADER)?;
-    fd.write(&constants::V0_HEADER.to_be_bytes())?;
+    let _ = fd.write(&constants::NLDB_SSTABLE_HEADER)?;
+    let _ = fd.write(&constants::V0_HEADER.to_be_bytes())?;
 
     inorder_flush(
         table,
@@ -61,15 +61,15 @@ pub fn write_sstable(table: &MemtableInner, fd: &mut File) -> std::io::Result<()
     let index_block_len = index_block.len();
     let index_block_buffer = encode_index_block(index_block);
     let bloom_filter_start = index_block_start + index_block_buffer.len() as u64;
-    fd.write(&index_block_buffer)?;
+    let _ = fd.write(&index_block_buffer)?;
     let bloom_filter_buffer = bloom_filter.serialize();
-    fd.write(&bloom_filter_buffer)?;
+    let _ = fd.write(&bloom_filter_buffer)?;
     let footer = encode_footer(
-        index_block_start as u64,
+        index_block_start,
         index_block_len as u64,
-        bloom_filter_start as u64,
+        bloom_filter_start,
     );
-    fd.write(&footer)?;
+    let _ = fd.write(&footer)?;
     fd.flush()?;
     Ok(())
 }
@@ -105,9 +105,9 @@ fn inorder_flush(
         let after = *disk_size % constants::DISK_BLOCK_SIZE;
 
         if before > after || record_offset == constants::HEADER_SIZE {
-            index_block.push((current_node.key.clone(), record_offset as u64));
+            index_block.push((current_node.key.clone(), record_offset));
         }
-        fd.write(&disk_record)?;
+        let _ = fd.write(&disk_record)?;
     }
     inorder_flush(
         table,

@@ -28,18 +28,20 @@ struct HeapNode {
 }
 
 impl PartialOrd for HeapNode {
+    // First compare on key.
+    // If key is the same, the large key wins here (Reverse in BinaryHeap implementation).
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        let ord = self.record.cmp(&other.record);
-        match ord {
-            Ordering::Equal => Some(self.table_idx.cmp(&other.table_idx)),
-            _ => Some(ord),
-        }
+        Some(self.record.cmp(&other.record))
     }
 }
 
 impl Ord for HeapNode {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap()
+        let ord = self.record.cmp(&other.record);
+        match ord {
+            Ordering::Equal => self.table_idx.cmp(&other.table_idx),
+            _ => ord,
+        }
     }
 }
 
@@ -75,16 +77,13 @@ pub async fn sstable_background(
                 let sstable = SSTable::from_path(path).expect("Unable to read in SSTable file");
                 let current_len = sstable_cache.push(sstable).await;
                 immutable.pop().await;
-                if current_len >= sstable_cache.compaction_rate as usize {
+                if current_len >= sstable_cache.compaction_rate {
                     let tables = sstable_cache.clone_tables().await;
-                    let num_tables = tables.len();
                     let table_iters = tables_to_iterators(tables).await;
                     let (compact_table, compact_table_path) =
-                        tokio::task::spawn_blocking(move || {
-                            run_compaction(table_iters, num_tables)
-                        })
-                        .await
-                        .expect("Unable to run compaction");
+                        tokio::task::spawn_blocking(move || run_compaction(table_iters))
+                            .await
+                            .expect("Unable to run compaction");
                     cleanup(sstable_cache.clone(), compact_table, compact_table_path).await;
                 }
                 sstable_ack
@@ -144,16 +143,14 @@ async fn cleanup(sstable_cache: SSTableCache, sstable: SSTable, new_table_path: 
 * Replace all cache SSTables with the compact SSTable.
 * Remove all stale SSTable disk files.
 * */
-pub(crate) fn run_compaction(
-    mut table_iters: Vec<SSTableIterator>,
-    num_tables: usize,
-) -> (SSTable, PathBuf) {
+pub(crate) fn run_compaction(mut table_iters: Vec<SSTableIterator>) -> (SSTable, PathBuf) {
     let mut writer =
         CompactionWriter::new().expect("Unable to open SSTable file for CompactionWriter");
     let mut heap: BinaryHeap<Reverse<HeapNode>> = BinaryHeap::new();
 
-    for i in 0..num_tables {
-        if let Some(record) = table_iters[i].next() {
+    // Initially hydrate the heap with at most 1 node per SSTable file.
+    for (i, sstable) in table_iters.iter_mut().enumerate() {
+        if let Some(record) = sstable.next() {
             let heap_node = HeapNode::new(record, i);
             heap.push(Reverse(heap_node));
         }
@@ -166,7 +163,7 @@ pub(crate) fn run_compaction(
 
         let smallest_key = &smallest.record.key;
 
-        while let Some(ref record_ref) = heap.peek() {
+        while let Some(record_ref) = heap.peek() {
             let inner_ref = &record_ref.0;
             if &inner_ref.record.key != smallest_key {
                 break;
@@ -254,7 +251,7 @@ mod tests {
         .await;
 
         let iters = vec![to_iter(t0).await, to_iter(t1).await];
-        let (mut compact, compact_path) = run_compaction(iters, 2);
+        let (mut compact, compact_path) = run_compaction(iters);
         let _gc = TempFile(compact_path);
 
         assert!(compact.search(b"a").is_ok());
@@ -270,7 +267,7 @@ mod tests {
         let (older, _g1) = make_sstable(&[(b"k", NodeData::Data(b"old_val".to_vec()))]).await;
 
         let iters = vec![to_iter(newer).await, to_iter(older).await];
-        let (mut compact, compact_path) = run_compaction(iters, 2);
+        let (mut compact, compact_path) = run_compaction(iters);
         let _gc = TempFile(compact_path);
 
         assert_eq!(compact.search(b"k").unwrap(), b"new_val".to_vec());
@@ -281,7 +278,7 @@ mod tests {
         let (t0, _g0) = make_sstable(&[(b"k", NodeData::Tombstone)]).await;
 
         let iters = vec![to_iter(t0).await];
-        let (mut compact, compact_path) = run_compaction(iters, 1);
+        let (mut compact, compact_path) = run_compaction(iters);
         let _gc = TempFile(compact_path);
 
         assert!(compact.search(b"k").is_err());
@@ -294,7 +291,7 @@ mod tests {
         let (older, _g1) = make_sstable(&[(b"k", NodeData::Data(b"stale".to_vec()))]).await;
 
         let iters = vec![to_iter(newer).await, to_iter(older).await];
-        let (mut compact, compact_path) = run_compaction(iters, 2);
+        let (mut compact, compact_path) = run_compaction(iters);
         let _gc = TempFile(compact_path);
 
         assert!(compact.search(b"k").is_err());
@@ -309,7 +306,7 @@ mod tests {
         .await;
 
         let iters = vec![to_iter(t0).await];
-        let (mut compact, compact_path) = run_compaction(iters, 1);
+        let (mut compact, compact_path) = run_compaction(iters);
         let _gc = TempFile(compact_path);
 
         // Both keys accessible — SSTable search validates index ordering internally

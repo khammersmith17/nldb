@@ -22,7 +22,7 @@ This is an implementation (in all reality a rather naive one) of a LSM Tree styl
 
 [X] database statements
 
-[ ] database API over TCP
+[X] database API over TCP
 
 [ ] credential storing
 
