@@ -126,12 +126,7 @@ pub fn read_data_block(fd: &mut File, offset: u64, key: &[u8]) -> Result<Blob, S
     if buffer_offset as u64 + (log_size - total_key_bytes as u64)
         > constants::RECORD_READ_BUFFER_SIZE
     {
-        return read_oversized_record_from_disk(
-            fd,
-            log_size - total_key_bytes as u64,
-            buffer_offset,
-            buffer,
-        );
+        return read_oversized_record_from_disk(fd, buffer_offset, buffer);
     }
 
     let (blob_size, bytes_walked) = util::decode_varint(&buffer, buffer_offset);
@@ -148,21 +143,24 @@ pub fn read_data_block(fd: &mut File, offset: u64, key: &[u8]) -> Result<Blob, S
 /// Read passed the blob size, and extend with overflow buffer.
 fn read_oversized_record_from_disk(
     fd: &mut File,
-    remaining_log_size: u64,
     mut offset: usize,
     buffer: Vec<u8>,
 ) -> Result<Blob, SSTableError> {
-    let remaining_buffer_size = constants::RECORD_READ_BUFFER_SIZE - offset as u64;
-    let overflow_buffer_size = remaining_log_size - remaining_buffer_size;
-    let mut overflow_buffer = vec![0_u8; overflow_buffer_size as usize];
-    let _ = fd.read_exact(&mut overflow_buffer)?;
-
     let (blob_size, bytes_walked) = util::decode_varint(&buffer, offset);
-    debug_assert_eq!(blob_size + bytes_walked as u64, remaining_log_size);
     offset += bytes_walked;
 
-    let mut result = buffer[offset..].to_vec();
-    result.extend(overflow_buffer);
+    let first_part = &buffer[offset..];
+    debug_assert!(first_part.len() < blob_size as usize);
+
+    // Allocate a new vec, copy the current read in blob in.
+    let mut result = Vec::with_capacity(blob_size as usize);
+    result.extend_from_slice(first_part);
+
+    // Fill the rest with emtpy data.
+    result.resize(blob_size as usize, 0_u8);
+
+    // Read the rest of the blob directly into the result buffer.
+    let _ = fd.read_exact(&mut result[first_part.len()..])?;
     Ok(result)
 }
 
