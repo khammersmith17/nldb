@@ -118,26 +118,26 @@ impl NldbInner {
     // Second check memtable.
     // Third check immutable table being flushed to disk.
     // Fourth check SSTables.
-    pub(super) async fn get(&self, key: Blob) -> Option<Blob> {
+    pub(super) async fn get(&self, key: &[u8]) -> Option<Blob> {
         self.check_poison_flag();
-        let cached = self.cache.get(&key).await;
+        let cached = self.cache.get(key).await;
 
         if cached.is_some() {
             return cached;
         }
 
         if let Some(blob) = self.read_memtable(&key).await {
-            self.read_through_cache(key.clone(), blob.clone()).await;
+            self.read_through_cache(key.to_owned(), blob.clone()).await;
             return Some(blob);
         }
 
         if let Some(blob) = self.read_immutable_table(&key).await {
-            self.read_through_cache(key.clone(), blob.clone()).await;
+            self.read_through_cache(key.to_owned(), blob.clone()).await;
             return Some(blob);
         }
 
         if let Ok(value) = self.sstable_cache.search(&key).await {
-            self.read_through_cache(key, value.clone()).await;
+            self.read_through_cache(key.to_owned(), value.clone()).await;
             return Some(value);
         }
 

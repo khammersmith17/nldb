@@ -27,7 +27,7 @@ impl Nldb {
         self.inner.write(key, value).await
     }
 
-    pub async fn get(&self, key: Blob) -> Option<Blob> {
+    pub async fn get(&self, key: &[u8]) -> Option<Blob> {
         self.inner.get(key).await
     }
 

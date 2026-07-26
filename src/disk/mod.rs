@@ -90,6 +90,82 @@ pub fn search_data_block(
     Err(SSTableError::DiskRecordNotFound)
 }
 
+pub fn read_data_block(fd: &mut File, offset: u64, key: &[u8]) -> Result<Blob, SSTableError> {
+    /*
+     * Seek to exact offset on disk.
+     * Read in up to 4 KB into memory.
+     * parse record
+     * read in data blob
+     * */
+    let _ = fd.seek(SeekFrom::Start(offset))?;
+
+    let mut buffer = vec![0_u8; constants::RECORD_READ_BUFFER_SIZE as usize];
+    let _ = fd.read(&mut buffer)?;
+
+    let mut buffer_offset = 0_usize;
+
+    let header = buffer[buffer_offset];
+    buffer_offset += 1;
+
+    if is_tombstone(header) {
+        return Err(SSTableError::Tombstone);
+    }
+
+    let (log_size, log_bytes_walked) = util::decode_varint(&buffer, buffer_offset);
+    buffer_offset += log_bytes_walked;
+
+    let key_varint_len = util::varint_size_from_len(key.len());
+    #[cfg(debug_assertions)]
+    {
+        let key_start = buffer_offset + key_varint_len;
+        debug_assert_eq!(&buffer[key_start..key_start + key.len()], key);
+    }
+    let total_key_bytes = key_varint_len + key.len();
+    buffer_offset += total_key_bytes;
+
+    if buffer_offset as u64 + (log_size - total_key_bytes as u64)
+        > constants::RECORD_READ_BUFFER_SIZE
+    {
+        return read_oversized_record_from_disk(
+            fd,
+            log_size - total_key_bytes as u64,
+            buffer_offset,
+            buffer,
+        );
+    }
+
+    let (blob_size, bytes_walked) = util::decode_varint(&buffer, buffer_offset);
+    buffer_offset += bytes_walked;
+
+    // TODO: try to determine a zero copy approach.
+    Ok(buffer[buffer_offset..buffer_offset + blob_size as usize].to_vec())
+}
+
+/// Read the overflow when a log size exceeds 4 KB. Maintains 4KB read buffer and only requiring an
+/// additional IO syscall when the log size exceeds the default read buffer size.
+/// Assumes that the key has already been read.
+/// Determine required overflow size, and read in to a tightly packed overflow buffer.
+/// Read passed the blob size, and extend with overflow buffer.
+fn read_oversized_record_from_disk(
+    fd: &mut File,
+    remaining_log_size: u64,
+    mut offset: usize,
+    buffer: Vec<u8>,
+) -> Result<Blob, SSTableError> {
+    let remaining_buffer_size = constants::RECORD_READ_BUFFER_SIZE - offset as u64;
+    let overflow_buffer_size = remaining_log_size - remaining_buffer_size;
+    let mut overflow_buffer = vec![0_u8; overflow_buffer_size as usize];
+    let _ = fd.read_exact(&mut overflow_buffer)?;
+
+    let (blob_size, bytes_walked) = util::decode_varint(&buffer, offset);
+    debug_assert_eq!(blob_size + bytes_walked as u64, remaining_log_size);
+    offset += bytes_walked;
+
+    let mut result = buffer[offset..].to_vec();
+    result.extend(overflow_buffer);
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::disk::decode::decode_disk_record;

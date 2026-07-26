@@ -42,3 +42,6 @@ static DEFAULT_NUM_CACHE_SHARDS: OnceLock<u64> = OnceLock::new();
 pub fn get_default_cache_shards() -> u64 {
     *DEFAULT_NUM_CACHE_SHARDS.get_or_init(|| num_cpus::get() as u64)
 }
+
+// 4KB buffer size for initial read when seeking directly to offset of a record.
+pub const RECORD_READ_BUFFER_SIZE: u64 = 4096;
