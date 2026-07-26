@@ -138,7 +138,7 @@ pub fn read_data_block(fd: &mut File, offset: u64, key: &[u8]) -> Result<Blob, S
 
 /// Read the overflow when a log size exceeds 4 KB. Maintains 4KB read buffer and only requiring an
 /// additional IO syscall when the log size exceeds the default read buffer size.
-/// Assumes that the key has already been read.
+/// Assumes that the key and value size has already been read.
 /// Determine required overflow size, and read in to a tightly packed overflow buffer.
 /// Read passed the blob size, and extend with overflow buffer.
 fn read_oversized_record_from_disk(

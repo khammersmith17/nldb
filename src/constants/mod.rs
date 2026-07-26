@@ -31,6 +31,7 @@ pub const TCP_ADDRESS: &str = "127.0.0.1:7211";
 
 // DATA CONSTRAINTS
 pub const MAX_MESSAGE_SIZE: usize = (2 << 19) * 10;
+pub const MAX_KEY_SIZE: usize = 1024; // 1 KB
 
 // DEFAULT CACHE CONFIGS
 use num_cpus;
@@ -45,3 +46,15 @@ pub fn get_default_cache_shards() -> u64 {
 
 // 4KB buffer size for initial read when seeking directly to offset of a record.
 pub const RECORD_READ_BUFFER_SIZE: u64 = 4096;
+
+// ERROR CODES
+pub mod error_codes {
+    pub const INTERNAL_ERROR: u8 = 1_u8;
+    pub const INVALID_QUERY: u8 = 2_u8;
+    pub const KEY_NOT_FOUND: u8 = 3_u8;
+    pub const KEY_SIZE_CONSTRAINT: u8 = 4_u8;
+    pub const RECORD_SIZE_CONSTRAINT: u8 = 5_u8;
+}
+
+pub const TCP_SERVER_SUCCESS: u8 = 1_u8;
+pub const TCP_SERVER_ERROR: u8 = 0_u8;

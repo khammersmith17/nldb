@@ -124,9 +124,11 @@ A single success byte with no additional payload.
 
 | Code | Meaning |
 |------|---------|
-| `0x01` | Key not found |
+| `0x01` | Internal error |
 | `0x02` | Invalid request (parse error) |
-| `0x03` | Internal error |
+| `0x03` | Key not found |
+| `0x04` | Key exceeds size constraint |
+| `0x05` | Record exceeds size constraint |
 
 ---
 

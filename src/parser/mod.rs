@@ -1,3 +1,4 @@
+use crate::constants;
 use crate::error::NldbError;
 use crate::memtable::inner::Blob;
 use crate::util;
@@ -50,6 +51,22 @@ fn parse_key(buffer: &[u8], offset: usize) -> Result<(Blob, usize), NldbError> {
     Ok((key, key_end))
 }
 
+fn validate_data(key: &[u8], value_opt: Option<&[u8]>) -> Result<(), NldbError> {
+    if key.len() > constants::MAX_KEY_SIZE {
+        return Err(NldbError::KeySizeConstraint);
+    }
+
+    let Some(value) = value_opt else {
+        return Ok(());
+    };
+
+    if key.len() + value.len() > constants::MAX_MESSAGE_SIZE {
+        return Err(NldbError::RecordSizeConstraint);
+    }
+
+    Ok(())
+}
+
 enum RequestType {
     Get,
     Delete,
@@ -97,6 +114,7 @@ impl NldbRequest {
 
     fn parse_get(buffer: Vec<u8>, offset: usize) -> Result<NldbRequest, NldbError> {
         let (key, _) = parse_key(&buffer, offset)?;
+        validate_data(&key, None)?;
         Ok(NldbRequest::Get { key })
     }
 
@@ -112,11 +130,14 @@ impl NldbRequest {
         }
         let value = buffer[value_start..value_end].to_vec();
 
+        validate_data(&key, Some(&value))?;
+
         Ok(NldbRequest::Insert { key, value })
     }
 
     fn parse_delete(buffer: Vec<u8>, offset: usize) -> Result<NldbRequest, NldbError> {
         let (key, _) = parse_key(&buffer, offset)?;
+        validate_data(&key, None)?;
         Ok(NldbRequest::Delete { key })
     }
 }

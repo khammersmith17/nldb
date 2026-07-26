@@ -25,6 +25,8 @@ pub enum NldbError {
     InvalidParameter,
     InvalidConfigFile(yaml_serde::Error),
     IOError(std::io::Error),
+    KeySizeConstraint,
+    RecordSizeConstraint,
 }
 
 impl From<FromUtf8Error> for NldbError {
